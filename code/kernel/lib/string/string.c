@@ -2,6 +2,8 @@
 #include "debug.h"
 #include "string.h"
 
+extern size_t vsprintf(char * str_buff,char *format,va_list va);
+
 void memset_8 (void * start_addr,uint_32 size,uint_8 val){
 	ASSERT( start_addr != NULL);
 	//DEBUG_MSG(" start_addr : ",(uint_32)start_addr);
@@ -45,9 +47,25 @@ int memcmp(void *o1,void *o2,uint_32 size){
 
 uint_32 strlen(char * str){
 	uint_32 len = 0;
-	while(*str != '\0') ++len;
+	while(*(str++) != '\0') ++len;
 	return len;
 }
 
+char * strcat(char * res,char * s1,char * s2)
+{
+	uint_32 len1 = strlen(s1);
+	uint_32	len2 = strlen(s2);
+	memcopy(res,s1,len1-1);
+	memcopy(res + len1 - 1,s2,len2);
+	return res;
+}
 
-
+//返回格式化字符串str
+char * formative_str(char * format,char * str,...)
+{
+	va_list va;
+	va_start(va,&format);
+	va_next(va);
+	vsprintf(str,format,va);
+	return str;
+}

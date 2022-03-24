@@ -1,11 +1,13 @@
 #include "thread.h"
 #include "interrupt.h"
-#include "malloc.h"
+#include "smalloc.h"
 #include "global.h"
 #include "string.h" 
 #include "semaphore.h"
 uint_32 thread_id;
 mutex id_lock;
+//守护线程指针
+thread * deamon;
 extern void switch_on (struct thread *,struct thread *);
 extern void exchange_esp0(thread * t);
 //返回正在运行的线程pcb指针
@@ -28,6 +30,8 @@ void schedule(){
 		lst_push(&ready_queue,&cur->ready_tag);
 		cur->status = READY;
 	}
+	if(lst_empty(&ready_queue))
+		thread_unblock(deamon);
 	next = (struct thread *)lst_pop(&ready_queue);
 	next = struct_get(struct thread,ready_tag,next);
 	ASSERT((uint_32)next%0x1000 == 0);
@@ -38,7 +42,7 @@ void schedule(){
 		asm volatile ("mov %0,%%eax \n;\
 			       mov %%eax,%%cr3;\n" : \
 		 	       :"m"(next->page_dir) :);
-	//put_str(next->name);put_str(" carry out\n");
+	put_str(next->name);put_str(" carry out\n");
 	exchange_esp0(next);
 	switch_on(cur,next);
 }
@@ -112,8 +116,34 @@ void init_thread_list(){
 	init_main();
 	init_mutex(&id_lock);
 	thread_id = 0;
+	
+	//创建守护线程
+	deamon = thread_start("Deamon",10,deamon_fun,NULL);
 }
 
+//守护线程函数
+void deamon_fun()
+{
+	enum int_status old_status = int_disable();
+	//第一次守护线程会和其他线程一样先执行一次
+	if(!lst_empty(&ready_queue))
+		thread_block(deamon);
+	else
+		asm volatile("sti;hlt;");
+	set_int_status(old_status);
+}
+
+//线程休眠，主动让出CPU，注意不同于阻塞
+void thread_yield ()
+{
+	enum int_status old_status = int_disable();
+	thread * t = get_running();
+	ASSERT(!lst_find(&ready_queue,&t->ready_tag));	
+	t->status = READY;
+	lst_push(&ready_queue,&t->ready_tag);
+	schedule();
+	set_int_status(old_status);
+}
 struct thread *thread_start(char * name,uint_32 priority,thread_fun * function,void * fun_arg){
 	
 	struct thread * t = create_thread(name,priority,function,fun_arg);

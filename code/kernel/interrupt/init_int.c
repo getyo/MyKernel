@@ -7,9 +7,9 @@
 #define SEL_K_CODE 0x0008
 #define ENTRY_NUM 0x81
 
-extern void * int_entry_table[ENTRY_NUM];
 extern void int_entry_fill(void);
 extern void keyboard_int_handle();
+extern void * int_entry_table[ENTRY_NUM];
 //中断描述符表数组
 struct gate_des idt [ENTRY_NUM];
 //中断处理程序入口地址
@@ -18,18 +18,19 @@ struct gate_des idt [ENTRY_NUM];
 //初始化每一个中断描述符
 void * idt_table[ENTRY_NUM];
 char * idt_info[ENTRY_NUM];
+uint_32 total_ticks;
 
 void gernal_handle(int int_vector){
 	asm("cli");
 	put_str(idt_info[int_vector]);
+	put_int(int_vector);
 	put_char('\n');
-	while(1);
-	asm("sti");
+	asm("hlt");
 	return;
 }
 
 void handle_clock_intr(){
-	enum int_status old_status = int_disable();
+	enum int_status new_status = int_disable();
 	struct thread * t = get_running();
 	t->tick--;
 	t->total_tick++;
@@ -37,7 +38,8 @@ void handle_clock_intr(){
 		t->tick = t->priority;
 		schedule();
 	}
-	set_int_status(old_status);
+	total_ticks++;	//用于线程休眠计数
+	set_int_status(new_status);
 }
 
 static void idt_table_init(){
@@ -69,6 +71,11 @@ static void idt_table_init(){
 
 	//put_str("idt_table idt_info init \n");
 	return;
+}
+
+void register_int(uint_32 int_vec,void * fun)
+{
+	idt_table[int_vec] = fun;
 }
 
 static void make_idt_entry(struct gate_des * des,void * fun_addr){
@@ -103,9 +110,9 @@ static void init_pic(void){
 	write_port(PORT_S_ICW3,0x02);
 	write_port(PORT_S_ICW4,0x01);
 
-	write_port(PORT_M_OCW1,0xfc);
+	write_port(PORT_M_OCW1,0xf8);
 
-	write_port(PORT_S_OCW1,0xff);
+	write_port(PORT_S_OCW1,0xcf);
 
 	//put_str("pic init \n");
 	return;
@@ -136,6 +143,15 @@ static void init_timer(uint_8 control_word){
 	return;
 }
 
+//让线程休眠msnd毫秒
+void mtime_sleep(uint_32 msnd)
+{
+	uint_32 start_ticks = total_ticks;
+	//将毫秒转化为ticks
+	msnd = DIV_UP(msnd * IRQ0_FREQUENCY,1000);//之所以这么算是因为舍入问题
+	if(total_ticks - start_ticks < msnd)
+		thread_yield();
+}
 void init_int(void){
 	int_entry_fill();
 	init_int_des();
@@ -147,6 +163,7 @@ void init_int(void){
 	uint_64 idt_ptr = ((sizeof(idt) - 1) | (((uint_64)(uint_32)idt) << 16));
 	asm volatile("lidt %0": : "m"(idt_ptr));
 	//put_str("idt loaded \n");
+	total_ticks = 0;
 	return;
 }
 

@@ -11,8 +11,6 @@
 #define U_VIR_SIZE KERNEL_VIR_MEM_SIZE * 3
 
 #define ALLOCABLE_START  0xc0201000 
-//定义用户栈
-#define U_ST 0xbfffffff
 
 //内核页目录表虚拟地址
 #define KERNEL_DIR 0xfffff000

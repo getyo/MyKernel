@@ -51,6 +51,7 @@
 #define SYS_GETPID 0
 #define SYS_WRITE 1
 #define SYS_MALLOC 2
+#define SYS_FREE 3
 
 void syscall_table_init();
 //第0号系统调用，获取当前运行的线程id

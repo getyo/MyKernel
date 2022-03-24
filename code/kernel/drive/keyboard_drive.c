@@ -4,6 +4,68 @@
 #include "debug.h"
 #include "condition_var.h"
 
+static char key_map[][2] = {
+  {0,0},
+  {esc,esc},
+  {'1','!'}, 
+  {'2','@'}, 
+  {'3','#'}, 
+  {'4','$'}, 
+  {'5','%'}, 
+  {'6','^'}, 
+  {'7','&'}, 
+  {'8','*'}, 
+  {'9','('}, 
+  {'0',')'}, 
+  {'-','_'}, 
+  {'=','+'},
+  {backspace,backspace}, 
+  {tab,tab},
+  {'q','Q'}, 
+  {'w','W'}, 
+  {'e','E'}, 
+  {'r','R'}, 
+  {'t','T'}, 
+  {'y','Y'}, 
+  {'u','U'}, 
+  {'i','I'}, 
+  {'o','O'}, 
+  {'p','P'}, 
+  {'[','{'}, 
+  {']','}'},
+  {enter,enter},
+  {ctrl_l_char,ctrl_l_char},
+  {'a','A'}, 
+  {'s','S'}, 
+  {'d','D'}, 
+  {'f','F'}, 
+  {'g','G'}, 
+  {'h','H'}, 
+  {'j','J'}, 
+  {'k','K'}, 
+  {'l','L'}, 
+  {';',':'}, 
+  {'\'','"'}, 
+  {'`','~'}, 
+  {shift_l_char,shift_l_char},
+  {'\\','|'}, 
+  {'z','Z'}, 
+  {'x','X'}, 
+  {'c','C'}, 
+  {'v','V'}, 
+  {'b','B'}, 
+  {'n','N'}, 
+  {'m','M'}, 
+  {',','<'}, 
+  {'.','>'}, 
+  {'/','?'},
+  {shift_r_char,shift_r_char},
+  {'*','*'},
+  {alt_l_char,alt_l_char},
+  {' ',' '},
+  {caps_lock_char,caps_lock_char}
+ };
+
 static mutex __take_lock,__give_lock;
 condition_var __buff_full,__buff_empty;
 cir_queue __kb_buff;
@@ -63,6 +125,7 @@ void keyboard_int_handle(){
 			else if(last_shift && last_cap) give_char(key_map[data1][0]);
 			else if(last_cap) give_char(key_map[data1][1]);
 			else give_char(key_map[data1][0]);
+			
 		}
 		else if(last_shift) give_char(key_map[data1][1]);
 		else give_char(key_map[data1][0]);
@@ -81,7 +144,7 @@ void take_char(){
 	while(1){
 		lock(&__take_lock);
 		conditional_block(&__buff_empty);
-		console_put_char(cq_pop(&__kb_buff));
+		console_put_char(&__kb_buff);
 		conditional_notify(&__buff_full);
 		unlock(&__take_lock);
 	}

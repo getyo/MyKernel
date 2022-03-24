@@ -7,9 +7,9 @@ ASFLAGS = -f elf
 CFLAGS = -m32 -I $Kinclude/ -I $Uinclude/ -nostdinc
 LDFLAGS = -e main -Ttext 0xc0001500 -m elf_i386
 objects = $Omain.o $Oinit_int.o $Okernel.o $Oput_char.o $Oput_str.o $Ointerrupt.o $Odebug.o $Ostring.o \
-          $Obitmap.o $Omalloc.o $Opool.o $Othread.o $Olist.o $Oswitch.o $Osemaphore.o $Oconsole.o \
+          $Obitmap.o $Osmalloc.o $Opool.o $Othread.o $Olist.o $Oswitch.o $Osemaphore.o $Oconsole.o \
           $Okeyboard_drive.o $Ocondition_var.o $Ocir_queue.o $Oproc.o $Osyscall.o $Ostdio.o $Oprocess.o \
-          $Ostdlib.o
+          $Omalloc.o $Oide.o $Ostdio_kernel.o
 cc_comd = gcc $(CFLAGS) -c $^ -o $@
 as_comd = nasm $(ASFLAGS) $^ -o $@
 
@@ -33,7 +33,7 @@ $Ostring.o : $Klib/string/string.c
 	$(cc_comd)
 $Obitmap.o : $Klib/data_structure/bitmap.c
 	$(cc_comd)
-$Omalloc.o : $Kmem_manger/malloc.c
+$Osmalloc.o : $Kmem_manger/smalloc.c
 	$(cc_comd)
 $Opool.o : $Kmem_manger/pool.c
 	$(cc_comd)
@@ -61,7 +61,11 @@ $Ostdio.o : $Ustd/stdio.c
 	$(cc_comd)
 $Oprocess.o : $Ustd/process.c
 	$(cc_comd)
-$Ostdlib.o : $Ustd/stdlib.c
+$Omalloc.o : $Ustd/malloc.c
+	$(cc_comd)
+$Oide.o : $Kdrive/ide.c
+	$(cc_comd)
+$Ostdio_kernel.o : $Klib/print/stdio_kernel.c
 	$(cc_comd)
 .PHONY: clean out all disasm
 clean:
@@ -74,6 +78,8 @@ run:
 	cd /home/wu/Documents/bochsdbg/bochs-2.7 ; \
 	if [ -f "hd60M.img.lock" ];\
 	then rm hd60M.img.lock ; fi ;\
+	if [ -f "hd80M.img.lock" ];\
+	then rm hd80M.img.lock ; fi ;\
 	bin/bochs -f bochsrc.disk ;\
 	cd /home/wu/project/code;
 all : main out disasm run

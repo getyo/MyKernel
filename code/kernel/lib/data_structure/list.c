@@ -10,7 +10,7 @@ void lst_push(struct list_head * queue,struct list_node *node){
 	//DEBUG_MSG("",0);
 	ASSERT(node != NULL);
 	ASSERT(!lst_find(queue,node));
-	enum int_status old_status = int_disable(); 
+	enum int_status new_status = int_disable(); 
 	if(queue->head == NULL){
 		queue->head = node;
 		queue->tail = node;
@@ -25,13 +25,13 @@ void lst_push(struct list_head * queue,struct list_node *node){
 		queue->tail = node;
 	}
 	ASSERT(queue->tail == node && lst_find(queue,node));
-	set_int_status(old_status);
+	set_int_status(new_status);
 }
 
 struct list_node * lst_pop(struct list_head * queue){
 	//DEBUG_MSG("",0);
 	ASSERT(queue->head != NULL);
-	enum int_status old_status = int_disable();
+	enum int_status new_status = int_disable();
 	if(queue->head == NULL) return NULL;
 	//DEBUG_MSG("head = ",queue->head);
 	struct list_node * head = queue->head;
@@ -39,7 +39,7 @@ struct list_node * lst_pop(struct list_head * queue){
 	head->pre = NULL;
 	head->next = NULL;
 	if(queue->head != NULL) queue->head->pre = NULL;
-	set_int_status(old_status);
+	set_int_status(new_status);
 	return head;
 }
 
@@ -86,9 +86,12 @@ bool lst_empty(struct list_head * list){
 	return (list->head == NULL);
 }
 
-
-
-
+void lst_traverse(list * l,void action())
+{
+	list_node * i = l->head;
+	while(i->next != NULL)
+		action(i);
+}
 
 
 

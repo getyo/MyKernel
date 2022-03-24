@@ -2,7 +2,7 @@
 #define __ARENA__H__
 #include "data_type.h"
 #include "global.h"
-#include "malloc.h"
+#include "smalloc.h"
 #include "list.h"
 #include "semaphore.h"
 
@@ -15,7 +15,7 @@ typedef struct {
 typedef struct{
 	mem_block_decs * owner;	//此arena所属的描述符
 	uint_32 cnt;	//big = true：arena含有的页框数；\
-			big = false： 空闲的内存块数目
+			big = false： 已分配的内存块数目
 	bool big;	//arena所管理的内存块是否大于1024byte
 }arena;
 
@@ -27,5 +27,5 @@ typedef struct {
 mem_block_decs mdecs [MBLOCK_TYPE];
 
 //返回medecs中链表元素所在arena
-#define elem2arena(elem) (elem & PAGE_SIZE)
+#define elem2arena(elem) ((uint_32)elem & PAGE_SIZE)
 #endif

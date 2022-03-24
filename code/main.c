@@ -1,7 +1,7 @@
 #include "init_int.h"
 #include "print.h"
 #include "debug.h"
-#include "malloc.h"
+#include "smalloc.h"
 #include "pool.h"
 #include "thread.h"
 #include "semaphore.h"
@@ -9,9 +9,10 @@
 #include "proc.h"
 #include "syscall.h"
 #include "stdio.h"
-#include "stdlib.h"
+#include "malloc.h"
+#include "ide.h"
+#include "stdio_k.h"
 
-uint_32 a;
 void print(uint_32 n);
 void main(void){
 	set_cursor(0);
@@ -30,14 +31,12 @@ void main(void){
 	console_put_str("proc init \n");
 	mem_decs_init(mdecs);
 	console_put_str("mem init \n");
+	ide_init();
 	int_enable();
-	a = 16;
-	proc_start("name",10,print,a);
-	while(1);
+	//proc_start("name",10,print,a);
 }
 
 void print(uint_32 n){
 	uint_32 p = malloc(2);
 	printf("the memory is %x",p);
-	while(1);
 }

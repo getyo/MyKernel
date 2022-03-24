@@ -1,4 +1,4 @@
-#include "BitMap.h"
+#include "bitmap.h"
 #include "data_type.h"
 #include "debug.h"
 #include "print.h"

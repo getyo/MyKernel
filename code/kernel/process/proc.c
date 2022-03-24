@@ -72,8 +72,8 @@ proc * init_proc(proc * p,proc_fun * fun,void * fun_arg){
 	stack_top->cs = SEL_UC;
 	stack_top->eip = fun;
 	stack_top->eflags = EF_MBS + EF_IFEN + EF_IOPL0;
-	stack_top->ss_old = SEL_UD;
-	stack_top->esp_old = (uint_32)p + PAGE_SIZE;
+	stack_top->ss_new = SEL_UD;
+	stack_top->esp_new = (uint_32)p + PAGE_SIZE;
 	
 	p->u_vaddr.start_addr = U_VIR_START;
 	p->u_vaddr.size = U_VIR_SIZE;
@@ -117,7 +117,7 @@ void process_fun(){
 	bool st_f = create_page(USER_F,U_ST);
 	ASSERT(st_f);
 	//压入函数参数
-	stack_top->esp_old = U_ST - 8;
+	stack_top->esp_new = U_ST - 8;
 	*(uint_32 *)(U_ST - 4) = stack_top->fun_arg;
 	//malloc_page(USER_F,1);
 	asm volatile ("mov %0,%%esp; jmp %1" \

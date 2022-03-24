@@ -1,7 +1,7 @@
 #ifndef __POOL__HH__
 #define __POOL__HH__
 #include "data_type.h"
-#include "BitMap.h"
+#include "bitmap.h"
 
 
 struct pool {

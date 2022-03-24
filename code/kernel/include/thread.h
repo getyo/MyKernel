@@ -4,7 +4,7 @@
 #include "list.h"
 #include "debug.h"
 #include "interrupt.h"
-#include "malloc.h"
+#include "smalloc.h"
 #include "pool.h"
 #define member_offset(struct,member) &((struct *)0)->member
 #define struct_get(struct,member,memb_addr) (uint_32)memb_addr - (uint_32)member_offset(struct,member) 
@@ -51,8 +51,8 @@ typedef struct {
 	uint_32 eip;
 	uint_32 cs;
 	uint_32 eflags;
-	uint_32 esp_old;
-	uint_32 ss_old;
+	uint_32 esp_new;
+	uint_32 ss_new;
 	void * fun_arg;
 }proc_st;
 
@@ -111,4 +111,8 @@ void schedule();
 struct thread * get_running();
 //互斥获取id
 uint_32 acquire_id();
+//守护线程函数
+void deamon_fun();
+//线程休眠
+void thread_yield();
 #endif

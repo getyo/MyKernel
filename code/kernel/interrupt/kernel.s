@@ -10,7 +10,7 @@ extern syscall_table
 
 section .data
 global int_entry_table
-	int_entry_table times 0x21 dd 0
+	int_entry_table times 0x81 dd 0
 	
 section .text
 ;此宏接受两个参数，一个是中断号，一个是错误码

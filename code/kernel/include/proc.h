@@ -5,7 +5,7 @@
 #include "data_type.h"
 #include "global.h"
 #include "debug.h"
-#include "malloc.h"
+#include "smalloc.h"
 
 typedef struct{
 	uint_32 pre_task;

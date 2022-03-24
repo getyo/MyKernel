@@ -10,15 +10,15 @@ enum int_status get_int_status(void){
 }
 
 enum int_status int_enable(void){
-	enum int_status old_status = get_int_status();
+	enum int_status new_status = get_int_status();
 	asm volatile ("sti");
-	return old_status;
+	return new_status;
 }
 
 enum int_status int_disable (void){
-	enum int_status old_status = get_int_status();
+	enum int_status new_status = get_int_status();
 	asm volatile("cli");
-	return old_status;
+	return new_status;
 }
 
 enum int_status set_int_status(enum int_status s){

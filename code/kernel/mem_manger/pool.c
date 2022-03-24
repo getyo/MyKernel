@@ -1,10 +1,10 @@
-#include "BitMap.h"
+#include "bitmap.h"
 #include "debug.h"
 #include "data_type.h"
 #include "string.h"
 #include "global.h"
 #include "pool.h"
-#include "malloc.h"
+#include "smalloc.h"
 #include "semaphore.h"
 
 extern mutex mem_lock;
