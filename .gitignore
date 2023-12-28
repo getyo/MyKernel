@@ -1,2 +1,4 @@
 Debug
 *.o
+main
+main.s
