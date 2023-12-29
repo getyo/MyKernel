@@ -148,7 +148,7 @@ void read_hd(disk * hd,char * buf,uint_32 start_lba,uint_32 sector_cnt)
 	}
 	
 	//注意读取到buf时要以字节位为单位
-	read_stream(idep_data(hd->my_channel),buf,(sector_cnt*512/8));
+	read_wordstream(idep_data(hd->my_channel),buf,(sector_cnt*512/8));
 	unlock(&hd->my_channel->lock);
 }
 
@@ -170,8 +170,18 @@ void write_hd(disk * hd,char *buf,uint_32 start_lba,uint_32 size)
 		asm("hlt");
 	}
 	
-	write_stream(idep_data(hd->my_channel),buf,size);
+	write_wordstream(idep_data(hd->my_channel),buf,size);
 	unlock(&hd->my_channel->lock);
+}
+
+static void word_reverse(char * buf,int size){
+	int i = 0;
+	uint_8 temp;
+	for(;i < size;i+=2){
+		temp = buf[i];
+		buf[i] = buf[i+1];
+		buf[i+1] = temp;
+	}
 }
 
 //硬盘中断处理函数
@@ -220,7 +230,7 @@ void disk_init()
 void out_partition(list_node * tag)
 {
 	partition * p = (uint_32)tag - (uint_32)&((partition *)tag)->tag;
-	printk("%s	%d	%d \n",p->name,p->start_lba,p->end_lba);
+	printk("%s  %d  %d \n",p->name,p->start_lba,p->end_lba);
 }
 void identify_disk(disk * hd)
 {
@@ -237,14 +247,11 @@ void identify_disk(disk * hd)
 		printk("%s error : channel %s \n",hd->name,hd->my_channel->name);
 		asm("hlt");
 	}
-	int i = 0;
-	while(i < 512)
-	{
-		//因为identify命令返回数据以字为单位，需要调整
-		buf[i+1]  = read_port(idep_data(hd->my_channel));
-		buf[i] = read_port(idep_data(hd->my_channel));
-		i+=2;
-	}
+	
+	//读取磁盘认证信息，不同与读磁盘命令，不在扇区内读
+	read_wordstream(idep_data(hd->my_channel),buf,256);
+	word_reverse(buf,512);
+
 	unlock(&hd->my_channel->lock);
 	char info[64];
 	memset_8(info,64,0);
@@ -256,8 +263,6 @@ void identify_disk(disk * hd)
 	uint_16 sector_cnt = *(uint_16*)(buf + 120);
 	printk("SECTOR:%d \n",sector_cnt);
 }
-
-
 
 char part_id;
 void read_partition(disk * hd)
@@ -275,7 +280,7 @@ void read_partition(disk * hd)
 		ext = false;
 		part_cnt = 0;
 		//读取引导扇区
-		read_hd(hd,&bs,start_sector,sizeof(boot_sector));
+		read_hd(hd,&bs,start_sector,1);
 		for(;part_cnt < 4; part_cnt++)
 		{
 			p = &bs.pe[part_cnt];
@@ -301,7 +306,7 @@ void read_partition(disk * hd)
 					partition_init(&hd->part_e[part_e_cnt],p,hd);
 					lst_push(&part_lst,&hd->part_p[part_e_cnt].tag);
 					++part_e_cnt;
-				}
+				} 
 			}
 		}
 	}

@@ -115,7 +115,7 @@ static void init_pic(void){
 
 	write_port(PORT_M_OCW1,0xf8);
 
-	write_port(PORT_S_OCW1,0xcf);
+	write_port(PORT_S_OCW1,0xbf);
 
 	//put_str("pic init \n");
 	return;

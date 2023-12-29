@@ -26,6 +26,11 @@ static inline void read_stream(uint_16 port,void * start_addr,uint_32 size){
 	asm volatile("cld; rep insb":"+D"(start_addr),"+c"(size):"d"(port));
 }
 
+//size是以字为单位，1字=2字节
+static inline void read_wordstream(uint_16 port,void * start_addr,uint_32 size){
+	asm volatile("cld; rep insw":"+D"(start_addr),"+c"(size):"d"(port):"memory");
+}
+
 static inline void write_port(uint_16 port,uint_32 data){
 	asm volatile("out %b1,%w0": :"d"(port),"a"(data));
 }
@@ -34,4 +39,10 @@ static inline void write_port(uint_16 port,uint_32 data){
 static inline void write_stream(uint_16 port,void * start_addr,uint_32 size){
 	asm volatile("cld; rep outsb": "+S"(start_addr),"+c"(size):"d"(port));
 }
+
+//size是以字为单位，1字=2字节
+static inline void write_wordstream(uint_16 port,void * start_addr,uint_32 size){
+	asm volatile("cld; rep outsw":"+S"(start_addr),"+c"(size):"d"(port));
+}
+
 #endif
