@@ -27,7 +27,7 @@
 
 //device寄存器相关值
 #define DEV_MBS 0xa0	
-#define DEV_LBA 0x40
+#define DEV_LBA 0x08
 #define DEV_SHD 0x10	//从盘
 
 //status寄存器相关值
@@ -50,6 +50,7 @@ void channel_init()
 	ide_channel * c;
 	while(i <= ide_cnt){
 		c = &channel[i];
+		memset_8(c->name,0,8);
 		char * n = "ide"; 
 		memcopy(c->name,n,4);
 		c->name[3] = '0' + i;
@@ -81,6 +82,7 @@ void channel_init()
 disk * select_disk(disk * hd){
 	uint_8 dev = DEV_MBS | DEV_LBA;
 	if(hd->dev_no) dev |= DEV_SHD;
+	printk("dev: %x\n",dev);
 	write_port(idep_dev(hd->my_channel),dev);
 	return hd;
 }
@@ -109,7 +111,7 @@ void select_sector(disk * hd,uint_32 start_lba,uint_8 sector_cnt)
 void send_cmd(ide_channel * c,uint_8 cmd)
 {
 	c->expecting_intr = true;
-	printk("channel:%s \n the port is 0x%x\n",c->name,idep_cmd(c));
+	//printk("channel:%s \n the port is 0x%x\n",c->name,idep_cmd(c));
 	write_port(idep_cmd(c),cmd);
 }
 
@@ -191,7 +193,8 @@ void hd_intr()
 	uint_32 int_vec;
 	asm volatile("movw 8(%%ebp),%0":"=r"(int_vec):);
 	ide_channel * c = &channel[int_vec - 0x2e];
-	printk("%s ready\n",c->name);
+	//printk("channel num:%d\n",int_vec-0x2e);
+	//printk("%s ready\n",c->name);
 	//解除阻塞
 	if(c->expecting_intr){
 		c->expecting_intr = false;
@@ -208,6 +211,9 @@ void disk_init()
 	char hd_cnt = *(char *)(0x475),i = 0;
 	ide_channel * c;
 	disk * hd;
+#ifdef __DEBUG__
+	printk("disk cnt: %d\n",hd_cnt);
+#endif
 	for(;i < hd_cnt;++i){
 		c = &channel[i/2];
 		hd = &c->mydisk[i%2];
@@ -222,7 +228,7 @@ void disk_init()
 		read_partition(hd);
 		
 		int i;
-		printk("\n\nname         start_lba       end_lba\n");
+		printk("\nname         start_lba       end_lba\n");
 		lst_traverse(&part_lst,out_partition);
 	}
 }
@@ -237,9 +243,9 @@ void identify_disk(disk * hd)
 	__F;
 	char buf[512];
 	lock(&hd->my_channel->lock);
+	select_disk(hd);
 	send_cmd(hd->my_channel,CMD_IDENTIFY);
 	//利用阻塞当前线程，等待硬盘中断唤醒
-	//printk("semalist head: %d\n",hd->my_channel->s.acquirer.head);
 	sema_down(&hd->my_channel->s);
 	//这里进行一次检测，看看硬盘是否准备好了，如果不是硬件出错，一般不会出现问题
 	if(! hd_busy(hd))
@@ -300,7 +306,7 @@ void read_partition(disk * hd)
 					lst_push(&part_lst,&hd->part_p[part_p_cnt].tag);
 					++part_p_cnt;
 				}
-				else
+				else //逻辑分区
 				{
 					hd->part_p[part_p_cnt].is_ext = true;
 					partition_init(&hd->part_e[part_e_cnt],p,hd);
@@ -310,6 +316,8 @@ void read_partition(disk * hd)
 			}
 		}
 	}
+	printk("part_p_cnt: %d\n",part_p_cnt);
+	printk("part_e_cnt: %d\n",part_e_cnt);
 }
 
 

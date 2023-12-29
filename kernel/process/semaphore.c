@@ -60,18 +60,19 @@ void lock(struct mutex * m){
 	//确保锁的可重入
 	if(m->owner != NULL && get_running() == m->owner)
 		++m->reentry_flag;
-	else
-		m->owner = sema_down(m);
+	else{
+		m->owner = sema_down(&m->smhe);
+	}
 	set_int_status(old_status);
 }
 
 void unlock(struct mutex * m){
 	enum int_status old_status = int_disable();
 	//对于重入的线程，只有当重入次数耗尽才会释放锁
-	if(m->reentry_flag)
+	if(m->reentry_flag > 0)
 		--m->reentry_flag;
 	else{
-		sema_up(m);
+		sema_up(&m->smhe);
 		m->owner = NULL;
 	} 
 	set_int_status(old_status);
@@ -82,8 +83,7 @@ void thread_block(struct thread * t){
 	ASSERT(t->status != BLOCK && t->status != FINISHED);
 	t->status = BLOCK;
 	t->tick = 1;
-	int_enable();
-	while(t->tick == 1);
+	handle_clock_intr();
 	int_disable();
 }
 
@@ -91,7 +91,6 @@ void thread_unblock(struct thread *t){
 	ASSERT(get_int_status() == INT_OFF);
 	ASSERT(t->status == BLOCK);
 	t->status = READY;
-	//put_str(t->name);put_str(" unblock remove\n");
 	lst_head_insert(&ready_queue,&t->ready_tag);
 }
 

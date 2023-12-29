@@ -1,5 +1,6 @@
 #include "syscall.h"
 #include "stdio.h"
+#include "debug.h"
 
 void printf(char * format,...){
 	va_list va;
@@ -11,13 +12,14 @@ void printf(char * format,...){
 //将格式串修正为要输出的字符串，并保存到str_buff中
 size_t vsprintf(char * str_buff,char *format,va_list va)
 {
-	while( *format != '\0')
+	char fc = *format;
+	while(fc)
 	{
-		if(*format == '%')
+		if(fc == '%')
 		{
-			++format;
+			fc = *(++format);
 			//根据格式化字符替换字符串
-			switch(*format)
+			switch(fc)
 			{
 			case 'x':
 			{
@@ -38,7 +40,13 @@ size_t vsprintf(char * str_buff,char *format,va_list va)
 			{
 				//由于最终要合并成一个字符串，所以需要舍弃结束字符
 				char * str = *va_next(va);
-				while(*str != '\0') *(str_buff++) = *(str++); 
+				char sc = *str;
+				while(sc) {
+					*str_buff = sc;
+					++str_buff;
+					sc = *(++str);
+				} 
+				//DEBUG_MSG("format:",format);
 				break;
 			}
 			case 'c':
@@ -48,11 +56,12 @@ size_t vsprintf(char * str_buff,char *format,va_list va)
 			}
 			default:break;
 			}
-			++format;
+			fc = *(++format);
 			continue;	
 		}
-		*str_buff = *format;
-		++str_buff,++format;
+		*str_buff = fc;
+		++str_buff;
+		fc = *(++format);
 	}
 	*str_buff = '\0';
 }

@@ -31,6 +31,7 @@ void schedule(){
 		cur->status = READY;
 	}
 	else if (cur->status == BLOCK){
+		//put_str(cur->name);put_str(" blocked \n");
 		ASSERT(!lst_find(&ready_queue,&cur->ready_tag));
 	}
 	if(lst_empty(&ready_queue)){
