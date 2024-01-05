@@ -61,11 +61,10 @@ char * strcat(char * res,char * s1,char * s2)
 }
 
 //返回格式化字符串str
-char * formative_str(char * format,char * str,...)
+char * formative_str(char * buf,char * format,...)
 {
 	va_list va;
 	va_start(va,&format);
-	va_next(va);
-	vsprintf(str,format,va);
-	return str;
+	vsprintf(buf,format,va);
+	return buf;
 }

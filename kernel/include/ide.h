@@ -29,7 +29,7 @@ typedef struct disk{
 	ide_channel * my_channel;	//所属channel
 	char dev_no;			//master/slave盘，主为0，从为1
 	partition part_p [4];		//四个主分区
-	partition part_e [8];		//这里最多支持8个扩展分区，理论上来讲可以支持无限个
+	partition part_l [8];		//这里最多支持8个逻辑分区，理论上来讲可以支持无限个
 }disk;
 
 //定义ide通道
@@ -63,7 +63,7 @@ typedef struct boot_sector{
 	char boot_prog[446];
 	partition_entry pe[4];
 	uint_16 end;
-}boot_sector;
+}__attribute__((packed)) boot_sector;
 
 //channel的初始化
 void channel_init();

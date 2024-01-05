@@ -27,7 +27,7 @@
 
 //device寄存器相关值
 #define DEV_MBS 0xa0	
-#define DEV_LBA 0x08
+#define DEV_LBA 0x40
 #define DEV_SHD 0x10	//从盘
 
 //status寄存器相关值
@@ -91,8 +91,11 @@ disk * select_disk(disk * hd){
 void select_sector(disk * hd,uint_32 start_lba,uint_8 sector_cnt)
 {
 	ide_channel * channel = hd->my_channel;
+
+
+	write_port(idep_sector_cnt(hd->my_channel),sector_cnt);
 	//从低到高写入lba
-	uint_8 lba = start_lba & 0xff;
+	uint_8 lba = start_lba;
 	write_port(idep_lbal(hd->my_channel),lba);
 	lba = (start_lba >> 8);
 	write_port(idep_lbam(hd->my_channel),lba);
@@ -101,10 +104,12 @@ void select_sector(disk * hd,uint_32 start_lba,uint_8 sector_cnt)
 	
 	//写入扇区高4位到dev时，要注意不能覆盖之前写入dev的信息
 	lba = (start_lba >> 24);
-	write_port(idep_dev(hd->my_channel),DEV_LBA | DEV_MBS | (hd->dev_no ? DEV_SHD : 0) | lba);
+	uint_8 dev = DEV_LBA | DEV_MBS | (char)(hd->dev_no ? DEV_SHD : 0) | lba;
+	write_port(idep_dev(hd->my_channel),dev);
 	
+	//printk("dev:0x%x\n",dev);
 	//写入扇区数
-	write_port(idep_sector_cnt(hd->my_channel),sector_cnt);
+	//write_port(idep_sector_cnt(hd->my_channel),sector_cnt);
 }
 
 //向通道发出命令
@@ -150,7 +155,8 @@ void read_hd(disk * hd,char * buf,uint_32 start_lba,uint_32 sector_cnt)
 	}
 	
 	//注意读取到buf时要以字节位为单位
-	read_wordstream(idep_data(hd->my_channel),buf,(sector_cnt*512/8));
+	read_wordstream(idep_data(hd->my_channel),buf,(sector_cnt*512/2));
+	printk("the sector  starts from 0x%x\n",buf);
 	unlock(&hd->my_channel->lock);
 }
 
@@ -225,19 +231,21 @@ void disk_init()
 		hd->name[3] = '\0';
 		identify_disk(hd);
 		memset(&hd->part_p,sizeof(partition)*12,0);
-		read_partition(hd);
-		
-		int i;
-		printk("\nname         start_lba       end_lba\n");
-		lst_traverse(&part_lst,out_partition);
+		//第0号硬盘是裸盘，并不处理
+		if(i){	
+			read_partition(hd);
+			printk("\nname         start_lba       end_lba\n");
+			lst_traverse(&part_lst,out_partition);
+		}
 	}
 }
 
 void out_partition(list_node * tag)
 {
-	partition * p = (uint_32)tag - (uint_32)&((partition *)tag)->tag;
+	partition * p = (uint_32)tag - (uint_32)&((partition *)0)->tag;
 	printk("%s  %d  %d \n",p->name,p->start_lba,p->end_lba);
 }
+
 void identify_disk(disk * hd)
 {
 	__F;
@@ -281,7 +289,7 @@ void read_partition(disk * hd)
 	partition_entry * p;
 	uint_32 start_sector = 0;
 	//记录初始化了到了主/扩展分区
-	uint_8 part_p_cnt = 0,part_e_cnt = 0;
+	uint_8 part_p_cnt = 0,part_l_cnt = 0;
 	while(ext){
 		ext = false;
 		part_cnt = 0;
@@ -299,7 +307,7 @@ void read_partition(disk * hd)
 			else if(p->fsys_id != 0)
 			{
 				//主分区
-				if(p->start_sector == 0)
+				if(!start_sector)
 				{
 					hd->part_p[part_p_cnt].is_ext = false;
 					partition_init(&hd->part_p[part_p_cnt],p,hd);
@@ -309,23 +317,23 @@ void read_partition(disk * hd)
 				else //逻辑分区
 				{
 					hd->part_p[part_p_cnt].is_ext = true;
-					partition_init(&hd->part_e[part_e_cnt],p,hd);
-					lst_push(&part_lst,&hd->part_p[part_e_cnt].tag);
-					++part_e_cnt;
-				} 
+					partition_init(&hd->part_l[part_l_cnt],p,hd);
+					lst_push(&part_lst,&hd->part_l[part_l_cnt].tag);
+					++part_l_cnt;
+				}
 			}
 		}
 	}
 	printk("part_p_cnt: %d\n",part_p_cnt);
-	printk("part_e_cnt: %d\n",part_e_cnt);
+	printk("part_l_cnt: %d\n",part_l_cnt);
 }
 
 
 partition * partition_init(partition * part,part_entry * pe,disk * hd)
 {
 	__F;
-	char * n = formative_str("%s%c",part->name,hd->name,'0' + part_id++);
-	memcopy(part->name,n,strlen(n));
+	memset_8(part->name,8,0);
+	formative_str(part->name,"%s%c",hd->name,'0' + part_id++);
 	part->start_lba = pe->start_sector;
 	part->end_lba = pe->end_sector;
 	part->mydisk = hd;

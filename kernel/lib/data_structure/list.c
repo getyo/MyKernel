@@ -94,6 +94,7 @@ bool lst_empty(struct list_head * list){
 void lst_traverse(list * l,void action(list_node *))
 {
 	list_node * i = l->head;
+	if (!i) printk("list is empty\n");
 	while(i != NULL){
 		action(i);
 		i = i->next;
