@@ -6,8 +6,6 @@
 #include "interrupt.h"
 #include "smalloc.h"
 #include "pool.h"
-#define member_offset(struct,member) &((struct *)0)->member
-#define struct_get(struct,member,memb_addr) (uint_32)memb_addr - (uint_32)member_offset(struct,member) 
 
 typedef void thread_fun(void *);
 typedef void proc_fun(void *);

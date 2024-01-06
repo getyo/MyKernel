@@ -61,4 +61,7 @@
 #define EF_IOPL0 0
 #define EF_IFEN 0x200
 #define EF_IFDIS 0
+//根据结构体成员获取结构体
+#define member_offset(struct,member) &((struct *)0)->member
+#define struct_get(struct,member,memb_addr) (uint_32)memb_addr - (uint_32)member_offset(struct,member) 
 #endif

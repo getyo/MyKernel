@@ -16,9 +16,9 @@ typedef struct boot_sector boot_sector;
 typedef struct partition{
 	char name[8];
 	list_node tag;
-	uint_32 start_lba;	//起始扇区地址
-	uint_32 end_lba;	//结束扇区地址
-	bool is_ext;		//是否为扩展分段
+	uint_32 start_lba;	//起始lba地址
+	uint_32 lba_cnt;	//lba数
+	bool is_logic;		//是否为逻辑分区
 	disk * mydisk;		//所属磁盘
 	bitmap * sector_bitmap 	//扇区位图
 }partiton;
@@ -86,7 +86,7 @@ void disk_init();
 void out_partition();
 void identify_disk(disk * hd);
 void read_partition(disk * hd);
-partition * partition_init(partition * part,part_entry * pe,disk * hd);
+partition * partition_init(partition * part,uint_32 start_lba,part_entry * pe,disk * hd);
 void ide_init();
 
 #endif

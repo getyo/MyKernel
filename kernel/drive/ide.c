@@ -82,7 +82,7 @@ void channel_init()
 disk * select_disk(disk * hd){
 	uint_8 dev = DEV_MBS | DEV_LBA;
 	if(hd->dev_no) dev |= DEV_SHD;
-	printk("dev: %x\n",dev);
+	//printk("dev: %x\n",dev);
 	write_port(idep_dev(hd->my_channel),dev);
 	return hd;
 }
@@ -91,7 +91,6 @@ disk * select_disk(disk * hd){
 void select_sector(disk * hd,uint_32 start_lba,uint_8 sector_cnt)
 {
 	ide_channel * channel = hd->my_channel;
-
 
 	write_port(idep_sector_cnt(hd->my_channel),sector_cnt);
 	//从低到高写入lba
@@ -138,49 +137,93 @@ bool hd_busy(disk * hd)
 }
 
 //读取硬盘扇区
-void read_hd(disk * hd,char * buf,uint_32 start_lba,uint_32 sector_cnt)
+void read_hd(disk * hd,char * buf,uint_32 start_lba,uint_32 sec_cnt)
 {
 	lock(&hd->my_channel->lock);
 	select_disk(hd);
-	select_sector(hd,start_lba,sector_cnt);
-	send_cmd(hd->my_channel,CMD_READ);
-	//利用阻塞当前线程，等待硬盘中断唤醒
-	sema_down(&hd->my_channel->s);
-	//这里进行一次检测，看看硬盘是否准备好了，如果不是硬件出错，一般不会出现问题
-	if(! hd_busy(hd))
-	{
-		printk("%s error : channel %s \n",hd->name,hd->my_channel->name);
-		printk("read from lba %d failed",start_lba);
-		asm("hlt");
-	}
+	int sec_down = 0;
+	uint_8 sec_read = 0;	
+	uint_32 buf_off = 0;
+
+	//由于硬件限制，每次只能最多读取256个扇区，比256大需要重新再选择扇区读
+	//缓存区的大小正确性这里不做检查，由用户保证
+	while (sec_down <= sec_cnt){
+		if( (sec_cnt - sec_down) >= 256){
+			sec_read = 0;	//0代表读取256个扇区
+		}
+		else {
+			sec_read = sec_cnt - sec_down;
+		}
+		select_sector(hd,start_lba + sec_down ,sec_read);
+		send_cmd(hd->my_channel,CMD_READ);
+		//利用阻塞当前线程，等待硬盘中断唤醒
+		sema_down(&hd->my_channel->s);		
+
+		//这里进行一次检测，看看硬盘是否准备好了，如果不是硬件出错，一般不会出现问题
+		if(! hd_busy(hd))
+		{
+			printk("%s error : channel %s \n",hd->name,hd->my_channel->name);
+			printk("read from lba %d failed",start_lba);
+			asm("hlt");
+		}
 	
-	//注意读取到buf时要以字节位为单位
-	read_wordstream(idep_data(hd->my_channel),buf,(sector_cnt*512/2));
-	printk("the sector  starts from 0x%x\n",buf);
-	unlock(&hd->my_channel->lock);
+		//注意读取到buf时要以字节位为单位
+		read_wordstream(idep_data(hd->my_channel),buf + buf_off,(sec_read*512/2));
+		unlock(&hd->my_channel->lock);
+		
+		if(!sec_read){
+			sec_down += 256;
+			buf_off += 256*512;
+		}
+		else {
+			sec_down += sec_read;
+			buf_off += sec_read *512;
+		}
+	}
 }
 
 //写入硬盘扇区
-void write_hd(disk * hd,char *buf,uint_32 start_lba,uint_32 size)
+void write_hd(disk * hd,char *buf,uint_32 start_lba,uint_32 sec_cnt)
 {
 	lock(&hd->my_channel->lock);
 	select_disk(hd);
-	select_sector(hd,start_lba,size / 512);
-	send_cmd(hd->my_channel,CMD_WRITE);
-	//利用阻塞当前线程，等待硬盘中断唤醒
-	sema_down(&hd->my_channel->s);
+	int sec_down = 0;
+	uint_8 sec_write = 0;
+	uint_32 buf_off = 0;
+
+	while (sec_down <= sec_cnt){
+		if( (sec_cnt - sec_down) >= 256){
+			sec_write = 0;	//0代表读取256个扇区
+		}
+		else {
+			sec_write = sec_cnt - sec_down;
+		}
+		select_sector(hd,start_lba + sec_down,sec_write);
+		send_cmd(hd->my_channel,CMD_WRITE);
+		//利用阻塞当前线程，等待硬盘中断唤醒
+		sema_down(&hd->my_channel->s);
 	
-	//这里进行一次检测，看看硬盘是否准备好了，如果不是硬件出错，一般不会出现问题
-	if(! hd_busy(hd))
-	{
-		printk("%s error : channel %s \n",hd->name,hd->my_channel->name);
-		printk("write to lba %d failed",start_lba);
-		asm("hlt");
+		//这里进行一次检测，看看硬盘是否准备好了，如果不是硬件出错，一般不会出现问题
+		if(! hd_busy(hd))
+		{
+			printk("%s error : channel %s \n",hd->name,hd->my_channel->name);
+			printk("write to lba %d failed",start_lba);
+			asm("hlt");
+		}	
+	
+		write_wordstream(idep_data(hd->my_channel),buf + buf_off,sec_write*512/2);
+		unlock(&hd->my_channel->lock);
+		
+		if(!sec_write){
+			sec_down += 256;
+			buf_off += 256*512;
+		}
+		else {
+			sec_down += sec_write;
+			buf_off += sec_write *512;
+		}
 	}
-	
-	write_wordstream(idep_data(hd->my_channel),buf,size);
-	unlock(&hd->my_channel->lock);
-}
+}	
 
 static void word_reverse(char * buf,int size){
 	int i = 0;
@@ -234,7 +277,7 @@ void disk_init()
 		//第0号硬盘是裸盘，并不处理
 		if(i){	
 			read_partition(hd);
-			printk("\nname         start_lba       end_lba\n");
+			printk("\nname  start_lba  lba_cnt\n");
 			lst_traverse(&part_lst,out_partition);
 		}
 	}
@@ -242,13 +285,12 @@ void disk_init()
 
 void out_partition(list_node * tag)
 {
-	partition * p = (uint_32)tag - (uint_32)&((partition *)0)->tag;
-	printk("%s  %d  %d \n",p->name,p->start_lba,p->end_lba);
+	partition * p = struct_get(partition,tag,tag); 
+	printk("%s    %d    %d \n",p->name,p->start_lba,p->lba_cnt);
 }
 
 void identify_disk(disk * hd)
 {
-	__F;
 	char buf[512];
 	lock(&hd->my_channel->lock);
 	select_disk(hd);
@@ -281,7 +323,7 @@ void identify_disk(disk * hd)
 char part_id;
 void read_partition(disk * hd)
 {
-	__F;
+	//__F;
 	part_id = 0;
 	bool ext = true;
 	int part_cnt;
@@ -309,33 +351,33 @@ void read_partition(disk * hd)
 				//主分区
 				if(!start_sector)
 				{
-					hd->part_p[part_p_cnt].is_ext = false;
-					partition_init(&hd->part_p[part_p_cnt],p,hd);
+					hd->part_p[part_p_cnt].is_logic = false;
+					partition_init(&hd->part_p[part_p_cnt],start_sector,p,hd);
 					lst_push(&part_lst,&hd->part_p[part_p_cnt].tag);
 					++part_p_cnt;
 				}
 				else //逻辑分区
 				{
-					hd->part_p[part_p_cnt].is_ext = true;
-					partition_init(&hd->part_l[part_l_cnt],p,hd);
+					hd->part_p[part_p_cnt].is_logic = true;
+					partition_init(&hd->part_l[part_l_cnt],start_sector,p,hd);
 					lst_push(&part_lst,&hd->part_l[part_l_cnt].tag);
 					++part_l_cnt;
 				}
 			}
 		}
 	}
-	printk("part_p_cnt: %d\n",part_p_cnt);
-	printk("part_l_cnt: %d\n",part_l_cnt);
+	//printk("part_p_cnt: %d\n",part_p_cnt);
+	//printk("part_l_cnt: %d\n",part_l_cnt);
 }
 
 
-partition * partition_init(partition * part,part_entry * pe,disk * hd)
+partition * partition_init(partition * part,uint_32 start_lba,part_entry * pe,disk * hd)
 {
-	__F;
+	//__F;
 	memset_8(part->name,8,0);
 	formative_str(part->name,"%s%c",hd->name,'0' + part_id++);
-	part->start_lba = pe->start_sector;
-	part->end_lba = pe->end_sector;
+	part->start_lba = start_lba;
+	part->lba_cnt = pe->sector_cnt;
 	part->mydisk = hd;
 	init_bit_map(&part->sector_bitmap);
 }
