@@ -35,6 +35,7 @@ int main(void){
 	int_enable();
 	ide_init();
 	fsys_init();
+	lst_traverse(&part_lst,mount,"sdb0");
 	//proc_start("name",10,print,a);
 	
 	return 0;

@@ -12,12 +12,12 @@ void super_block_init(super_block * sb,partition * p){
 	sb->start_lba = p->start_lba;
 	sb->inode_array_sects = DIV_ROUND_UP(sb->inode_cnt * sizeof(inode_entry),SECTOR_SIZE);	
 	sb->inode_bm_sects = DIV_ROUND_UP(sb->inode_cnt,SECTOR_BIT);
-	printk("lba_cnt %d,inode_array_sec %d,inode_bm_sec %d\n",
-		p->lba_cnt,sb->inode_array_sects,sb->inode_bm_sects);
+	//printk("lba_cnt %d,inode_array_sec %d,inode_bm_sec %d\n",
+	//	p->lba_cnt,sb->inode_array_sects,sb->inode_bm_sects);
 	sb->block_cnt = p->lba_cnt - sb->inode_array_sects \
 			- sb->inode_bm_sects \
 			- 3;
-	printk("block_cnt %d\n",sb->block_cnt);
+	//printk("block_cnt %d\n",sb->block_cnt);
 	//上述式子算出空闲块位图+空闲块总的扇区数
 	//注意下面的计算，直接让位图管理了上述两者的和，
 	//所以位图中一定有一部分是不能用的,
@@ -45,8 +45,6 @@ void block_bm_init(super_block * sb,void * buf){
 	for(i = sb->block_cnt;i < bm.size;++i){
 		bit_set(&bm,i);
 	}
-	char * p = buf;
-	printk("last : %x\n",*(p+511));
 }
 
 void inode_init(super_block * sb,void * buf){
@@ -57,6 +55,7 @@ void inode_init(super_block * sb,void * buf){
 }
 
 void fsys_init(){
+	printk("fsys_init start\n");
 	int i;
 	uint_32 buf_size;
 	char * buf;
@@ -77,9 +76,6 @@ void fsys_init(){
 			if(true){
 				//如果没有文件系统，则创建相应的文件系统
 				super_block_init(&sb,p);
-				printk("sb lba:%d\n sb magic :%x\n sb block_cnt : %d\n",\
-					p->start_lba + SUPER_BLOCK_LBA,sb.magic_num,\
-					sb.block_cnt);
 				write_hd(hd,&sb,p->start_lba + SUPER_BLOCK_LBA,1);
 				//构建空闲块位图
 				//首先找出要分配的内存的最大值，一次性分配缓存
@@ -87,7 +83,6 @@ void fsys_init(){
 					GREATER(sb.inode_bm_sects * SECTOR_SIZE,\
 						sb.inode_array_sects * SECTOR_SIZE));
 				buf = sys_malloc(buf_size);
-				printk("buf_size: %x\n buf addr: 0x%x",buf_size,buf);
 				block_bm_init(&sb,buf);
 				write_hd(hd,buf,sb.block_bm_addr,sb.block_bm_sects);
 				

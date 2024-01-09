@@ -186,8 +186,8 @@ void write_hd(disk * hd,char *buf,uint_32 start_lba,uint_32 sec_cnt)
 	uint_32 sec_write = 0;
 	uint_32 buf_off = 0;
 #ifdef __DEBUG__
-	printk("start write: start_lba %d,cnt %d\n",\
-		start_lba,sec_cnt);
+	//printk("start write: start_lba %d,cnt %d\n",\
+	//	start_lba,sec_cnt);
 #endif
 
 	while (sec_down < sec_cnt){
@@ -209,7 +209,7 @@ void write_hd(disk * hd,char *buf,uint_32 start_lba,uint_32 sec_cnt)
 		write_wordstream(idep_data(hd->my_channel),buf + buf_off,sec_write*SECTOR_SIZE/2);
 		//利用阻塞当前线程，等待硬盘中断唤醒
 		sema_down(&hd->my_channel->s);
-		printk("write to sector %d down\n",start_lba + sec_down);
+	//	printk("write to sector %d down\n",start_lba + sec_down);
 		sec_down += sec_write;
 		buf_off += sec_write * SECTOR_SIZE;
 	}
