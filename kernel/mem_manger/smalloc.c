@@ -50,9 +50,9 @@ void* malloc_page(enum pool_flags f,uint_32 page_cnt){
 	void * pte_check = NULL;
 	for(;i < page_cnt;i++){
 		if(f == KERNEL_F)
-			pte_check = add_pte((uint_32)vaddr + i * PAGE_SIZE,(uint_32)alloc_mem(KERNEL_F),PG_US_U + PG_RW_W + PG_P);
+			pte_check = add_pte((uint_32)vaddr + i * PAGE_SIZE,(uint_32)alloc_mem(KERNEL_F),PG_US_S | PG_RW_W | PG_P);
 		else
-			pte_check = add_pte((uint_32)vaddr + i * PAGE_SIZE,(uint_32)alloc_mem(USER_F),PG_US_U + PG_RW_W + PG_P);
+			pte_check = add_pte((uint_32)vaddr + i * PAGE_SIZE,(uint_32)alloc_mem(USER_F),PG_US_U | PG_RW_W | PG_P);
 		ASSERT(pte_check != NULL);
 	}
 	unlock(&mem_lock);
@@ -205,9 +205,9 @@ void * sys_malloc(uint_32 size){
 	//如果大于1024，需要特殊处理
 	if(size > 1024){
 		//获得需要多少页的内存,注意向上取整，一定会产生浪费
-		a = malloc_page(f,DIV_UP(size,1024));
+		a = malloc_page(f,DIV_UP(size + sizeof(arena),PAGE_SIZE));
 		a->big = true;
-		a->cnt = DIV_UP(size,1024);
+		a->cnt = DIV_UP(size + sizeof(arena),PAGE_SIZE);
 		a->owner = NULL;
 		unlock(&mem_lock);
 		return (void *)(a + 1);

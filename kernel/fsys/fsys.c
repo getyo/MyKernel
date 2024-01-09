@@ -87,7 +87,7 @@ void fsys_init(){
 					GREATER(sb.inode_bm_sects * SECTOR_SIZE,\
 						sb.inode_array_sects * SECTOR_SIZE));
 				buf = sys_malloc(buf_size);
-				printk("buf_size: %x\n",buf_size);
+				printk("buf_size: %x\n buf addr: 0x%x",buf_size,buf);
 				block_bm_init(&sb,buf);
 				write_hd(hd,buf,sb.block_bm_addr,sb.block_bm_sects);
 				

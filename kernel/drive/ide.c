@@ -230,7 +230,7 @@ static void word_reverse(char * buf,int size){
 void hd_intr()
 {
 	//通过中断向量号确定channel
-	uint_32 int_vec;
+	uint_16 int_vec;
 	asm volatile("movw 8(%%ebp),%0":"=r"(int_vec):);
 	ide_channel * c = &channel[int_vec - 0x2e];
 	//printk("channel num:%d\n",int_vec-0x2e);

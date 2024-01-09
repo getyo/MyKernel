@@ -27,5 +27,5 @@ typedef struct {
 mem_block_decs mdecs [MBLOCK_TYPE];
 
 //返回medecs中链表元素所在arena
-#define elem2arena(elem) ((uint_32)elem & PAGE_SIZE)
+#define elem2arena(elem) ((uint_32)elem & 0xfffff000)
 #endif
