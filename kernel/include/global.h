@@ -2,6 +2,10 @@
 #define __MEM_MANGE__H
 
 #define __DEBUG__
+#define DIV_ROUND_UP(a,b) ( (a-1)/(b+1)+1 )
+#define INT32_MIN 0xffffffff
+#define GREATER(a,b) (a>b?a:b)
+
 #define KERNEL_BITMAP 0xc009a000
 #define KERNEL_START 0x201000
 #define PAGE_SIZE (0x1000)	//4K
@@ -64,4 +68,13 @@
 //根据结构体成员获取结构体
 #define member_offset(struct,member) &((struct *)0)->member
 #define struct_get(struct,member,memb_addr) (uint_32)memb_addr - (uint_32)member_offset(struct,member) 
+//文件系统相关
+#define MAX_FNAME_LENGTH 16
+#define SECTOR_SIZE 512
+#define BLOCK_SIZE SECTOR_SIZE
+#define SECTOR_BIT 4096
+#define BLOCK_BIT SECTOR_BIT
+#define FS_MAGIC 0x568542e0
+#define FS_MAX_INODE_CNT 4096
+#define SUPER_BLOCK_LBA 0x1
 #endif

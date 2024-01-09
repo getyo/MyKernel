@@ -12,6 +12,7 @@
 #include "malloc.h"
 #include "ide.h"
 #include "stdio_k.h"
+#include "fsys.h"
 
 void print(uint_32 n);
 int main(void){
@@ -31,8 +32,9 @@ int main(void){
 	console_put_str("proc init \n");
 	mem_decs_init(mdecs);
 	console_put_str("mem init \n");
-	ide_init();
 	int_enable();
+	ide_init();
+	fsys_init();
 	//proc_start("name",10,print,a);
 	
 	return 0;

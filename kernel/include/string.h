@@ -10,6 +10,7 @@ void memset_32(void * start_addr,uint_32 size,uint_32 val);
 void memcopy(void * d_addr,void * s_addr,uint_32 size);
 int memcmp(void *o1,void *o2,uint_32 size);
 uint_32 strlen(char * str);
+int strcmp(char * s1,char *s2);
 char * strcat(char * res,char * s1,char * s2);
 //返回格式化字符串str
 char * formative_str(char * format,char * str,...);

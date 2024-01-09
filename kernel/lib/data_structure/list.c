@@ -91,12 +91,13 @@ bool lst_empty(struct list_head * list){
 	return (list->head == NULL);
 }
 
-void lst_traverse(list * l,void action(list_node *))
+void lst_traverse(list * l,bool action(list_node *,uint_32 arg),uint_32 arg)
 {
 	list_node * i = l->head;
 	if (!i) printk("list is empty\n");
-	while(i != NULL){
-		action(i);
+	bool res = true;
+	while(i != NULL && res){
+		res = action(i,arg);
 		i = i->next;
 	}
 }

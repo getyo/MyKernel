@@ -5,12 +5,15 @@
 #include "list.h"
 #include "semaphore.h"
 #include "condition_var.h"
+#include "fsys.h"
 
 typedef struct partition partition;
 typedef struct disk disk;
 typedef	struct ide_channel ide_channel;
 typedef struct partition_entry partition_entry;
 typedef struct boot_sector boot_sector;
+typedef struct super_block super_block;
+typedef struct dir dir;
 
 //定义分区
 typedef struct partition{
@@ -20,7 +23,10 @@ typedef struct partition{
 	uint_32 lba_cnt;	//lba数
 	bool is_logic;		//是否为逻辑分区
 	disk * mydisk;		//所属磁盘
-	bitmap * sector_bitmap 	//扇区位图
+	bitmap * block_bm;	//扇区位图
+	bitmap * inode_bm;	
+	super_block * sb;
+	dir * root;
 }partiton;
 
 //定义磁盘
@@ -83,10 +89,13 @@ void write_hd(disk * hd,char *buf,uint_32 start_lba,uint_32 size);
 void hd_intr();
 //硬盘初始化
 void disk_init();
-void out_partition();
+bool out_partition(list_node * tag,uint_32 arg);
 void identify_disk(disk * hd);
 void read_partition(disk * hd);
 partition * partition_init(partition * part,uint_32 start_lba,part_entry * pe,disk * hd);
 void ide_init();
 
+ide_channel channel[2];
+list part_lst;
+uint_32 hd_cnt;
 #endif

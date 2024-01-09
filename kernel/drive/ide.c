@@ -36,13 +36,11 @@
 #define STATUS_DRQ 0x08		//已准备好数据
 #define STATUS_ERR 0x01		//出错
 
-ide_channel channel[2];
-list part_lst;
 //channel的初始化
 void channel_init()
 {
 	//475里有硬盘个数
-	char hd_cnt = *(char *)(0x475);
+	hd_cnt = *(char *)(0x475);
 	//虽然本质上这里channel的个数就是2，但为了兼容，使用硬盘个数/2来计算 \
 	一个channel上挂两个硬盘
 	uint_8 ide_cnt = hd_cnt/2;
@@ -141,15 +139,15 @@ void read_hd(disk * hd,char * buf,uint_32 start_lba,uint_32 sec_cnt)
 {
 	lock(&hd->my_channel->lock);
 	select_disk(hd);
-	int sec_down = 0;
-	uint_8 sec_read = 0;	
+	uint_32 sec_down = 0;
+	uint_32 sec_read = 0;	
 	uint_32 buf_off = 0;
 
 	//由于硬件限制，每次只能最多读取256个扇区，比256大需要重新再选择扇区读
 	//缓存区的大小正确性这里不做检查，由用户保证
-	while (sec_down <= sec_cnt){
+	while (sec_down < sec_cnt){
 		if( (sec_cnt - sec_down) >= 256){
-			sec_read = 0;	//0代表读取256个扇区
+			sec_read = 256;	
 		}
 		else {
 			sec_read = sec_cnt - sec_down;
@@ -169,40 +167,38 @@ void read_hd(disk * hd,char * buf,uint_32 start_lba,uint_32 sec_cnt)
 	
 		//注意读取到buf时要以字节位为单位
 		read_wordstream(idep_data(hd->my_channel),buf + buf_off,(sec_read*512/2));
-		unlock(&hd->my_channel->lock);
-		
-		if(!sec_read){
-			sec_down += 256;
-			buf_off += 256*512;
-		}
-		else {
-			sec_down += sec_read;
-			buf_off += sec_read *512;
-		}
+		sec_down += sec_read;
+		buf_off += sec_read * SECTOR_SIZE;
 	}
+	unlock(&hd->my_channel->lock);
 }
 
 //写入硬盘扇区
+//注意这里的实现，buf本身并不一定是512的整数倍，但是你选择了用扇区作为单位写
+//也就是说，最后一个扇区很可能会超出buf的范围，写入一些不该写的东西，
+//不过总体来说无伤大雅，因为用户既然写了磁盘，就应该知道那部分是他写入的
+//这个问题会有安全性问题，但现阶段并不解决的重点
 void write_hd(disk * hd,char *buf,uint_32 start_lba,uint_32 sec_cnt)
 {
 	lock(&hd->my_channel->lock);
 	select_disk(hd);
-	int sec_down = 0;
-	uint_8 sec_write = 0;
+	uint_32 sec_down = 0;
+	uint_32 sec_write = 0;
 	uint_32 buf_off = 0;
+#ifdef __DEBUG__
+	printk("start write: start_lba %d,cnt %d\n",\
+		start_lba,sec_cnt);
+#endif
 
-	while (sec_down <= sec_cnt){
+	while (sec_down < sec_cnt){
 		if( (sec_cnt - sec_down) >= 256){
-			sec_write = 0;	//0代表读取256个扇区
+			sec_write = 256;
 		}
 		else {
 			sec_write = sec_cnt - sec_down;
 		}
 		select_sector(hd,start_lba + sec_down,sec_write);
 		send_cmd(hd->my_channel,CMD_WRITE);
-		//利用阻塞当前线程，等待硬盘中断唤醒
-		sema_down(&hd->my_channel->s);
-	
 		//这里进行一次检测，看看硬盘是否准备好了，如果不是硬件出错，一般不会出现问题
 		if(! hd_busy(hd))
 		{
@@ -210,19 +206,14 @@ void write_hd(disk * hd,char *buf,uint_32 start_lba,uint_32 sec_cnt)
 			printk("write to lba %d failed",start_lba);
 			asm("hlt");
 		}	
-	
-		write_wordstream(idep_data(hd->my_channel),buf + buf_off,sec_write*512/2);
-		unlock(&hd->my_channel->lock);
-		
-		if(!sec_write){
-			sec_down += 256;
-			buf_off += 256*512;
-		}
-		else {
-			sec_down += sec_write;
-			buf_off += sec_write *512;
-		}
+		write_wordstream(idep_data(hd->my_channel),buf + buf_off,sec_write*SECTOR_SIZE/2);
+		//利用阻塞当前线程，等待硬盘中断唤醒
+		sema_down(&hd->my_channel->s);
+		printk("write to sector %d down\n",start_lba + sec_down);
+		sec_down += sec_write;
+		buf_off += sec_write * SECTOR_SIZE;
 	}
+	unlock(&hd->my_channel->lock);
 }	
 
 static void word_reverse(char * buf,int size){
@@ -278,15 +269,16 @@ void disk_init()
 		if(i){	
 			read_partition(hd);
 			printk("\nname  start_lba  lba_cnt\n");
-			lst_traverse(&part_lst,out_partition);
+			lst_traverse(&part_lst,out_partition,0);
 		}
 	}
 }
 
-void out_partition(list_node * tag)
+bool out_partition(list_node * tag,uint_32 arg)
 {
 	partition * p = struct_get(partition,tag,tag); 
 	printk("%s    %d    %d \n",p->name,p->start_lba,p->lba_cnt);
+	return true;
 }
 
 void identify_disk(disk * hd)
@@ -352,14 +344,14 @@ void read_partition(disk * hd)
 				if(!start_sector)
 				{
 					hd->part_p[part_p_cnt].is_logic = false;
-					partition_init(&hd->part_p[part_p_cnt],start_sector,p,hd);
+					partition_init(&hd->part_p[part_p_cnt],start_sector + p->offset,p,hd);
 					lst_push(&part_lst,&hd->part_p[part_p_cnt].tag);
 					++part_p_cnt;
 				}
 				else //逻辑分区
 				{
 					hd->part_p[part_p_cnt].is_logic = true;
-					partition_init(&hd->part_l[part_l_cnt],start_sector,p,hd);
+					partition_init(&hd->part_l[part_l_cnt],start_sector + p->offset,p,hd);
 					lst_push(&part_lst,&hd->part_l[part_l_cnt].tag);
 					++part_l_cnt;
 				}
@@ -379,7 +371,6 @@ partition * partition_init(partition * part,uint_32 start_lba,part_entry * pe,di
 	part->start_lba = start_lba;
 	part->lba_cnt = pe->sector_cnt;
 	part->mydisk = hd;
-	init_bit_map(&part->sector_bitmap);
 }
 
 void ide_init()

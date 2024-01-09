@@ -25,5 +25,5 @@ void lst_remove(struct list_head *,struct list_node * node);
 void lst_head_insert(struct list_head * l,struct list_node * node);
 bool lst_empty(struct list_head * head);
 //以该动作编历链表
-void lst_traverse(list * l,void action());
+void lst_traverse(list * l,bool action(list_node *,uint_32 arg),uint_32 arg);
 #endif

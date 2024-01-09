@@ -9,7 +9,7 @@ LDFLAGS = -e main -Ttext 0xc0001500 -m elf_i386
 objects = $Omain.o $Oinit_int.o $Okernel.o $Oput_char.o $Oput_str.o $Ointerrupt.o $Odebug.o $Ostring.o \
           $Obitmap.o $Osmalloc.o $Opool.o $Othread.o $Olist.o $Oswitch.o $Osemaphore.o $Oconsole.o \
           $Okeyboard_drive.o $Ocondition_var.o $Ocir_queue.o $Oproc.o $Osyscall.o $Ostdio.o $Oprocess.o \
-          $Omalloc.o $Oide.o $Ostdio_kernel.o
+          $Omalloc.o $Oide.o $Ostdio_kernel.o $Ofsys.o
 cc_comd = gcc $(CFLAGS) -c $^ -o $@
 as_comd = nasm $(ASFLAGS) $^ -o $@
 
@@ -66,6 +66,8 @@ $Omalloc.o : $Ustd/malloc.c
 $Oide.o : $Kdrive/ide.c
 	$(cc_comd)
 $Ostdio_kernel.o : $Klib/print/stdio_kernel.c
+	$(cc_comd)
+$Ofsys.o : $Kfsys/fsys.c
 	$(cc_comd)
 .PHONY: clean out all disasm
 clean:

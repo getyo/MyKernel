@@ -2,3 +2,4 @@ Debug
 *.o
 main
 main.s
+*.swp

@@ -45,6 +45,20 @@ int memcmp(void *o1,void *o2,uint_32 size){
 	return 0;
 }
 
+int strcmp(char * s1,char * s2){
+	char * c1 = s1,* c2 = s2;
+	int diff;
+	while(*c1 && *c2){
+		diff = *c1 - *c2;
+		if(diff) return diff;
+		++c1,++c2;
+	}
+	if(!*c1 && *c2) return -1;
+	else if(*c1 && *c2) return 1;
+	else return 0;
+	
+}
+
 uint_32 strlen(char * str){
 	uint_32 len = 0;
 	while(*(str++) != '\0') ++len;
