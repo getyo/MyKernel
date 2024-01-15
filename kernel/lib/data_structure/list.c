@@ -34,13 +34,16 @@ struct list_node * lst_pop(struct list_head * queue){
 	enum int_status new_status = int_disable();
 	if(queue->head == NULL) return NULL;
 	//DEBUG_MSG("head = ",queue->head);
-	struct list_node * head = queue->head;
+	struct list_node * prehead = queue->head;
 	queue->head = queue->head->next;
-	head->pre = NULL;
-	head->next = NULL;
-	if(queue->head != NULL) queue->head->pre = NULL;
+	prehead->pre = NULL;
+	prehead->next = NULL;
+	if(queue->head != NULL) {
+		ASSERT(queue->head->pre == prehead);
+		queue->head->pre = NULL;
+	}
 	set_int_status(new_status);
-	return head;
+	return prehead;
 }
 
 int lst_find(struct list_head * l,struct list_node * node){

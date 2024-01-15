@@ -35,9 +35,12 @@ int main(void){
 	int_enable();
 	ide_init();
 	fsys_init();
+	printk("fsys init done\n");
 	lst_traverse(&part_lst,mount,"sdb0");
+	printk("sdb0 has mounted\n");
 	//proc_start("name",10,print,a);
-	
+	if(create_file(&root_dir,"/test_file",FT_REGULAR,100))
+		printk("create file seuccess\n");
 	return 0;
 }
 

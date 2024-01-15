@@ -67,7 +67,7 @@
 #define EF_IFDIS 0
 //根据结构体成员获取结构体
 #define member_offset(struct,member) &((struct *)0)->member
-#define struct_get(struct,member,memb_addr) (uint_32)memb_addr - (uint_32)member_offset(struct,member) 
+#define struct_get(struct,member,memb_addr) ( (uint_32)memb_addr - (uint_32)member_offset(struct,member) )
 //文件系统相关
 #define MAX_FNAME_LENGTH 16
 #define SECTOR_SIZE 512

@@ -1,4 +1,5 @@
 #include "proc.h"
+#include "fsys.h"
 tss ts;
 extern void switch_on(proc * cur,proc * next);
 extern uint_32 get_paddr(uint_32 vaddr);
@@ -79,7 +80,11 @@ proc * init_proc(proc * p,proc_fun * fun,void * fun_arg){
 	p->u_vaddr.size = U_VIR_SIZE;
 	p->u_vaddr.bit_map.map = malloc_page(KERNEL_F,24);
 	p->u_vaddr.bit_map.size = U_VIR_SIZE;
-	
+		
+	p->proc = p;
+	memset_32(p->fd,MAX_OPEN_FILE_PER_PROC,-1);
+	p->files = sys_malloc(sizeof(file) * MAX_OPEN_FILE_PER_PROC);
+
 	init_bit_map(&p->u_vaddr.bit_map);
 	lst_push(&ready_queue,&p->ready_tag);
 	lst_push(&all_queue,&p->all_tag);

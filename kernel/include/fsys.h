@@ -31,9 +31,11 @@ typedef struct inode_entry{
 
 typedef struct inode{
 	uint_32 open_cnt;	//打开计数器，用于关闭文件
-	bool is_wirting;
+	bool is_writing;
+	bool dirty;
 	inode_entry * entry;
 	list_node tag;
+	list proc_list;		//打开该文件的进程链表
 } inode; 
 
 typedef enum ftype{
@@ -56,6 +58,11 @@ typedef struct dir{
 	uint_8 buf[512];	
 }dir;
 
+//记录当前根目录
+dir root_dir;
+//记录当前分区
+partition * cur_part;
+//文件系统挂载以及初始化相关
 //完成对各个分区文件系统元数据的初始化工作
 void fsys_init();
 //构造超级块
@@ -66,4 +73,68 @@ void inode_init(super_block * sb,void *buf);
 void block_bm_init(super_block * sb,void * buf);
 //挂载分区
 bool mount(list_node* tag,uint_32 arg);
+void read_root(partition *p);
+
+//文件操作相关
+//文件打开类型
+typedef enum open_flag{
+	O_RO,	//只读
+	O_WO,	//只写
+	O_WR,	//读写
+	O_CRT	//创建
+}open_flag;
+//文件描述符
+typedef struct file{
+	uint_32 fpos;		//文件偏移指针
+	open_flag of;
+	inode * i_ptr;
+
+}file;
+//位图类型
+typedef enum bitmap_type{
+	BM_BLOCK,
+	BM_INODE
+}bitmap_type;
+
+/*************inode和block相关操作***************/
+//分配inode和block，若成功把位图相应位置1并返回下标，
+//否则返回-1
+int inode_alloc();
+int block_alloc();
+//向磁盘中添加inode
+void add_inode(uint_32 i_no,uint_32 *blocks,uint_32 fsize);
+//把位图的修改同步到磁盘
+void bitmap_sycn(uint_32 bit_index,bitmap_type bmt);
+//读取inode,缓存区由主调函数提供，至少两个扇区大小，返回值指向要读取的inode_entry
+inode_entry * read_inode(uint_32 index,char * buf);
+inode_entry * write_inode(inode_entry *ie,char *buf);
+void inode_open(inode *in,uint_32 index);
+void init_inode(inode *i,uint_32 open_cnt,inode_entry *entry);
+void inode_close(inode * in);
+//读取inode所指向文件的偏移所在的扇区，缓存区由主调函数提供，至少一个扇区大小，
+//返回值指向文件指针所要求的位置
+char * read_block(inode_entry * in,uint_32 fpos,char * buf);
+char * write_block(inode_entry * in,uint_32 fpos,char *buf);
+
+//目录处理相关
+#define MAX_DIR_SEARCH_LENGTH 1024
+//记录目录锁搜索结果的结构
+typedef struct search_log{
+	char * search_path[MAX_DIR_SEARCH_LENGTH];
+	dir * parent;
+	ftype ft;
+}search_log;
+
+/******************目录相关操作********************/
+dir_entry * search_file(char *path,search_log * s_log);
+bool dir_open(char * path,dir * d);
+void dir_close(dir * d);
+bool add_entry(dir * parent,char* fname,uint_32 i_no,ftype ft);
+
+#define MAX_FILE_BCNT 140
+#define INODE_PRIMARY_INDEX_CNT 12
+/*******************文件相关操作********************/
+bool create_file(dir * p,char *fname,ftype ft,uint_32 fsize);
+
+
 #endif

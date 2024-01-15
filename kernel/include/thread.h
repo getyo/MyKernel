@@ -68,7 +68,10 @@ struct thread_stack{
 	void * fun_arg;
 };
 
+#define MAX_OPEN_FILE_PER_PROC 20	//每个进程最多打开20个文件
 //实质就是Process Control Block
+//线程和进程共用一个结构体
+//至于一个结构体到底是线程还是进程，根据page_dir是否为NULL区分
 struct thread{
 	void * stack_top;
 	pool u_vaddr;
@@ -87,6 +90,19 @@ struct thread{
 	//页目录表物理地址
 	void * page_dir;
 	uint_32 stack_magic;
+
+	//如果是进程，这个位置为本身pcb地址
+	//如果是线程，记录了所属线程的PCB	
+	void * proc;	
+
+	//文件描述符指针数组
+	//对于线程来说，他们的fd[0]中保存着进程的fd数组地址
+	//因为线程本身并没有独立的文件资源分配权力
+	int fd[MAX_OPEN_FILE_PER_PROC];
+	//文件描述符数组指针
+	void * files;
+	
+	list_node general_tag;
 };
 typedef struct thread thread;
 typedef struct thread proc;

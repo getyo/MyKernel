@@ -96,6 +96,7 @@ struct thread * create_thread(char * name,uint_32 priority,thread_fun * function
 	t->total_tick = 0;
 	t->stack_magic = 0x78ffad09;
 	t->page_dir = NULL;
+	t->proc = get_running();
 	return t;
 }
 
@@ -109,6 +110,8 @@ void init_thread(struct thread *t,thread_fun * function,void * arg){
 	t_st->function = function;
 	t_st->fun_arg = arg;
 	t_st->esi = t_st->edi = t_st->ebp = t_st->ebx = 0;
+	t->fd[0] = ((thread *)t->proc)->fd;
+	
 	lst_push(&ready_queue,&t->ready_tag);
 	lst_push(&all_queue,&t->all_tag);
 }

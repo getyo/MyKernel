@@ -45,14 +45,30 @@ void * alloc_mem(enum pool_flags f){
 void* malloc_page(enum pool_flags f,uint_32 page_cnt){
 	lock(&mem_lock);
 	void * vaddr = alloc_vaddr(f,page_cnt);
-	if(vaddr == NULL) return NULL;
+	if(vaddr == NULL){
+		printk("virtual address has run out\n");
+		return NULL;
+	}
+	uint_32 paddr;
 	uint_32 i = 0;
 	void * pte_check = NULL;
 	for(;i < page_cnt;i++){
-		if(f == KERNEL_F)
-			pte_check = add_pte((uint_32)vaddr + i * PAGE_SIZE,(uint_32)alloc_mem(KERNEL_F),PG_US_S | PG_RW_W | PG_P);
-		else
-			pte_check = add_pte((uint_32)vaddr + i * PAGE_SIZE,(uint_32)alloc_mem(USER_F),PG_US_U | PG_RW_W | PG_P);
+		if(f == KERNEL_F){
+			paddr = alloc_mem(f);
+			if(!paddr){
+				printk("physical memory has run out\n");
+				return NULL;
+			}
+			pte_check = add_pte((uint_32)vaddr + i * PAGE_SIZE,paddr,PG_US_S | PG_RW_W | PG_P);
+		}
+		else{
+			paddr = alloc_mem(f);
+			if(!paddr){
+				printk("physical memory has run out\n");
+				return NULL;
+			}
+			pte_check = add_pte((uint_32)vaddr + i * PAGE_SIZE,paddr,PG_US_U | PG_RW_W | PG_P);
+		}
 		ASSERT(pte_check != NULL);
 	}
 	unlock(&mem_lock);
@@ -214,9 +230,9 @@ void * sys_malloc(uint_32 size){
 	}
 	
 	//寻找合适大小的描述符
-	int i = 0;
-	for(;i < 7;i++)
-		if(size < mdecs[i].type) break;
+	int i = MBLOCK_TYPE-1;
+	for(;i >= 0;--i)
+		if(size <= mdecs[i].type) break;
 	//如果没有arena可用，需要创建arena
 	if(lst_empty(&mdecs[i].freelist))
 	{	
@@ -244,7 +260,7 @@ void mblock_cut(arena * a,uint_32 size)
 	{
 		m = (mem_block *)ptr;
 		lst_push(&a->owner->freelist,&m->tag);
-		ptr += a->owner->type;
+		ptr += a->owner->type;	
 	}
 }
 
