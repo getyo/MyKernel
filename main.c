@@ -39,8 +39,11 @@ int main(void){
 	lst_traverse(&part_lst,mount,"sdb0");
 	printk("sdb0 has mounted\n");
 	//proc_start("name",10,print,a);
-	if(create_file(&root_dir,"/test_file",FT_REGULAR,100))
-		printk("create file seuccess\n");
+	if(create_file(&root_dir,"test",FT_REGULAR,100))
+		printk("create_file success\n");
+	printk("%s\n",get_running()->name);
+	reopen_dir("/",&root_dir);
+	print_dir(&root_dir);
 	return 0;
 }
 

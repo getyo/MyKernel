@@ -108,9 +108,10 @@ void bitmap_sycn(uint_32 bit_index,bitmap_type bmt);
 //读取inode,缓存区由主调函数提供，至少两个扇区大小，返回值指向要读取的inode_entry
 inode_entry * read_inode(uint_32 index,char * buf);
 inode_entry * write_inode(inode_entry *ie,char *buf);
-void inode_open(inode *in,uint_32 index);
+void open_inode(inode *in,uint_32 index);
 void init_inode(inode *i,uint_32 open_cnt,inode_entry *entry);
-void inode_close(inode * in);
+void close_inode(inode * in);
+void reload_inode(inode *in,uint_32 index);
 //读取inode所指向文件的偏移所在的扇区，缓存区由主调函数提供，至少一个扇区大小，
 //返回值指向文件指针所要求的位置
 char * read_block(inode_entry * in,uint_32 fpos,char * buf);
@@ -120,17 +121,18 @@ char * write_block(inode_entry * in,uint_32 fpos,char *buf);
 #define MAX_DIR_SEARCH_LENGTH 1024
 //记录目录锁搜索结果的结构
 typedef struct search_log{
-	char * search_path[MAX_DIR_SEARCH_LENGTH];
+	char search_path[MAX_DIR_SEARCH_LENGTH];
 	dir * parent;
 	ftype ft;
 }search_log;
 
 /******************目录相关操作********************/
 dir_entry * search_file(char *path,search_log * s_log);
-bool dir_open(char * path,dir * d);
-void dir_close(dir * d);
+bool open_dir(char * path,dir * d);
+void close_dir(dir * d);
+bool reopen_dir(char * path,dir *d);
 bool add_entry(dir * parent,char* fname,uint_32 i_no,ftype ft);
-
+void print_dir(dir *d);
 #define MAX_FILE_BCNT 140
 #define INODE_PRIMARY_INDEX_CNT 12
 /*******************文件相关操作********************/

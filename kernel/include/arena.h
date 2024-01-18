@@ -14,7 +14,7 @@ typedef struct {
 
 typedef struct{
 	mem_block_decs * owner;	//此arena所属的描述符
-	uint_32 cnt;	//big = true：arena含有的页框数；\
+	int_32 cnt;	//big = true：arena含有的页框数；\
 			big = false： 已分配的内存块数目
 	bool big;	//arena所管理的内存块是否大于1024byte
 }arena;

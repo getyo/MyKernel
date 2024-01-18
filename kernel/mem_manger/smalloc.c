@@ -13,11 +13,16 @@ mutex mem_lock;
 
 void * alloc_vaddr(enum pool_flags f,int page_cnt){
 	pool * temp;
-	if(f == KERNEL_F)
-		temp = &kernel_vaddr.bit_map;
+	if(f == KERNEL_F){
+		proc * p = get_running();
+		put_int(p);
+		temp = &kernel_vaddr;
+	}
 	else {
+		put_str("u");
 		//获取进程pcb
 		proc * p = get_running();
+		put_int(p);
 		temp = &p->u_vaddr;
 	}
 	ASSERT(page_cnt <= temp->bit_map.size);
@@ -243,8 +248,9 @@ void * sys_malloc(uint_32 size){
 		//将新的arena划分内存块
 		mblock_cut(a,mdecs[i].type);
 	}
-	unlock(&mem_lock);
 	felem = lst_pop(&mdecs[i].freelist);
+	unlock(&mem_lock);
+	a = elem2arena(felem);
 	++a->cnt;
 	return felem;
 }
@@ -259,7 +265,9 @@ void mblock_cut(arena * a,uint_32 size)
 	for(;i < cnt;i++) 
 	{
 		m = (mem_block *)ptr;
+		lock(&mem_lock);
 		lst_push(&a->owner->freelist,&m->tag);
+		unlock(&mem_lock);
 		ptr += a->owner->type;	
 	}
 }
@@ -271,21 +279,42 @@ void sys_free(void * m)
 {
 	pool_flags f;
 	thread * t = get_running();
+	printk("%s\n",t->name);
 	mem_block * mb = m;
 	if((uint_32)t->page_dir == 0x100000)
 		f = KERNEL_F;
 	else f = USER_F;
 	
-	arena * a = elem2arena(m);
+	arena * a = elem2arena(&mb->tag);
+	lock(&mem_lock);
 	if(a->big)
 	{
 		free_page(f,a,a->cnt);
 		goto end;
 	}
 	
-	if(--a->cnt == 0) free_page(f,a,1);
-	else lst_push(&a->owner->freelist,&mb->tag);
-end:
+#ifdef __DEBUG__
+	ASSERT(a->cnt >= 1);
+#endif
+	char * elem = a+1;
+	int i = 0;
+	int cnt = (PAGE_SIZE - sizeof(arena)) / a->owner->type;
+	if(--a->cnt <= 0){
+		__F;
+		while(i < cnt){
+			if(elem != m)
+				lst_remove(&a->owner->freelist,elem);
+			elem += a->owner->type;
+			++i;
+		}
+		free_page(f,a,1);
+	}
+	else{
+		lst_push(&a->owner->freelist,&mb->tag);
+	}
+end:	
+	unlock(&mem_lock);
+	printk("%s\n",t->name);
 	return;
 }
 

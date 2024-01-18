@@ -89,7 +89,7 @@ void fsys_init(){
 				//构建inode数组以及位图
 				memset_8(buf,buf_size,0);
 				//inode的位图本身除了根目录以外其他都是0
-				buf[0] = 0x1;	//小端优先
+				buf[0] = 0x80;	
 				//4096个inode，位图正好1扇区
 				write_hd(hd,buf,sb.inode_bm_addr,sb.inode_bm_sects);
 				buf[0] = 0x0;
@@ -100,14 +100,14 @@ void fsys_init(){
 				memset_8(buf,sizeof(inode_entry),0);
 				d = (dir_entry *) buf;
 				//根目录的当前目录和上级目录都是本身
-				memcopy(".",d[0].fname,2);
+				memcopy(d[0].fname,".",2);
 				d[0].inode_index = sb.root_index;
 				d[0].ft = FT_DIRECTORY;
-				memcopy("..",d[1].fname,3);
+				memcopy(d[1].fname,"..",3);
 				d[1].inode_index = sb.root_index;
 				d[1].ft = FT_DIRECTORY;
 				write_hd(hd,buf,sb.block_start - 1,1);
-				sys_free(buf);
+				
 			}
 			//这里可以根据魔数判断文件系统类型
 			//但现阶段不做这个工作
@@ -130,6 +130,11 @@ void read_root(partition * p){
 	sys_free(buf);
 }
 
+void reload_root(){
+	//读入root的inode
+	reopen_inode(root_dir.iptr,cur_part->sb->root_index);
+	read_block(root_dir.iptr->entry,root_dir.pos,root_dir.buf);
+}
 
 bool mount (list_node * tag,uint_32 arg){
 	partition * p = struct_get(partition,tag,tag);
@@ -144,7 +149,7 @@ bool mount (list_node * tag,uint_32 arg){
 	//读入空闲块位图
 	buf = sys_malloc(p->sb->block_bm_sects * SECTOR_SIZE);
 	ASSERT(buf != NULL);
-	uint_32  bm_start = p->sb->block_bm_addr + p->start_lba;
+	uint_32  bm_start = p->sb->block_bm_addr;
 	read_hd(p->mydisk,buf,bm_start,p->sb->block_bm_sects);
 	p->block_bm = sys_malloc(sizeof(bitmap));
 	ASSERT(p->block_bm != NULL);
@@ -154,7 +159,7 @@ bool mount (list_node * tag,uint_32 arg){
 	//读入inode位图
 	buf = sys_malloc(p->sb->inode_bm_sects * SECTOR_SIZE);	
 	ASSERT(buf!=NULL);
-	bm_start = p->sb->inode_bm_addr + p->start_lba;
+	bm_start = p->sb->inode_bm_addr;
 	read_hd(p->mydisk,buf,bm_start,p->sb->inode_bm_sects);
 	p->inode_bm = sys_malloc(sizeof(bitmap));
 	ASSERT(p->inode_bm != NULL);
@@ -163,8 +168,12 @@ bool mount (list_node * tag,uint_32 arg){
 	
 	//读入根目录
 	read_root(p);
+	print_dir(&root_dir);
+	printk("sb_block:%d\n",p->sb->block_start);
+	//print_dir(&root_dir);
 	return false;
 }
+
 
 /**********************inode和block操作******************/
 
@@ -174,13 +183,13 @@ void bitmap_sycn(uint_32 bit_index,bitmap_type bmt){
 	switch(bmt){
 		case BM_INODE:{
 			ASSERT(sec_index < cur_part->sb->inode_bm_sects);
-			buf_addr = cur_part->sb->inode_bm_addr + sec_index * SECTOR_SIZE;
+			buf_addr = (char *)cur_part->inode_bm->map + sec_index * SECTOR_SIZE;
 			write_hd(cur_part->mydisk,buf_addr,cur_part->sb->inode_bm_addr + sec_index,1);
 			break;
 		}
 		case BM_BLOCK:{
 			ASSERT(sec_index < cur_part->sb->block_bm_sects);
-			buf_addr = cur_part->block_bm->map + sec_index * SECTOR_SIZE;
+			buf_addr = (char *)cur_part->block_bm->map + sec_index * SECTOR_SIZE;
 			write_hd(cur_part->mydisk,buf_addr,cur_part->sb->block_bm_addr + sec_index,1);
 			break;
 		}	
@@ -204,6 +213,7 @@ inode_entry * read_inode(uint_32 index,char * buf){
 }
 
 inode_entry * write_inode(inode_entry * ie,char *buf){
+	__F;
 	uint_32 byte_st = ie->index * sizeof(inode_entry);
 	uint_32 sect_addr = byte_st / SECTOR_SIZE;	
 	inode_entry * buf_dirty = buf + (byte_st % SECTOR_SIZE);
@@ -260,12 +270,24 @@ char* write_block(inode_entry *in,uint_32 fpos,char *buf){
 	return fpos;
 }
 
-void inode_open(inode * i,uint_32 index){
-	char * buf = sys_malloc(sizeof(SECTOR_SIZE * 2));
+void open_inode(inode * i,uint_32 index){
+	char * buf = sys_malloc(SECTOR_SIZE * 2);
 	inode_entry * entry = read_inode(index,buf);
 	init_inode(i,1,entry);
 	sys_free(buf);
 	return;
+}
+
+void reopen_inode(inode * i,uint_32 index){
+	__F;
+	printk("0x%x\n",get_running());
+	char * buf = sys_malloc(SECTOR_SIZE * 2);
+	__F;
+	inode_entry * entry = read_inode(index,buf);
+	
+	i->dirty = false;
+	memcopy(i->entry,entry,sizeof(inode_entry));	
+	sys_free(buf);
 }
 
 //本函数提供inode结构中entry的内容分配，需要注意在关闭文件时释放
@@ -274,13 +296,13 @@ void init_inode(inode * i,uint_32 open_cnt,inode_entry * entry){
 	i->is_writing = false;
 	i->dirty = false;
 	i->entry = sys_malloc(sizeof(inode_entry));
-	memcopy(entry,i->entry,sizeof(inode_entry));
+	memcopy(i->entry,entry,sizeof(inode_entry));
 	init_list(&i->proc_list);
 	proc * p = (proc *)get_running()->proc;
 	lst_push(&i->proc_list,&p->general_tag);	
 }
 
-void inode_close(inode * in){
+void close_inode(inode * in){
 	if(in->dirty){
 		char * buf = sys_malloc(SECTOR_SIZE*2);
 		write_inode(in->entry,buf);
@@ -305,7 +327,7 @@ void add_inode(uint_32 i_no,uint_32 * blocks,uint_32 fsize){
 	uint_32 bcnt = DIV_ROUND_UP(fsize,SECTOR_SIZE);	
 	uint_32 i = 0;
 	for(;i < bcnt;++i){
-		ie->block[i] = blocks[i];
+		ie->block[i] = blocks[i] + cur_part->sb->block_start;
 	}
 	
 	char * buf = sys_malloc(2* SECTOR_SIZE);
@@ -342,16 +364,29 @@ static dir_entry * find_in_dir(char * fname,dir * d){
 //1.目录本身的内存由主调函数提供，但是目录inode内存由本函数提供
 //关闭目录需要注意关闭inode的内存
 //2.buf可被释放，里面的内容已被复制到dir的inode_ptr中
-static dir * read_dir(dir_entry * de,dir * d,char * buf){
+//3.de是在父目录找到的本目录目录项
+static dir * read_dir(dir_entry *de,dir * d,char * buf){
 	//读入并初始化目录的inode
 	d->iptr = sys_malloc(sizeof(inode));
-	inode_open(d->iptr,de->inode_index);
+	open_inode(d->iptr,de->inode_index);
 	
 	d->pos = 0;
 	read_block(d->iptr->entry,0,d->buf);
 	return d;
 }
 
+//注意和read_dir不同，这里没有再次申请inode的空间
+static dir * reload_dir(dir_entry *de,dir * d,char *buf){
+	if(d->iptr->dirty){
+		printk("the file has already changed,are you sure to reload?\n");
+	}
+	
+	printk("%s\n",get_running()->name);
+	reopen_inode(d->iptr,de->inode_index);
+	
+	read_block(d->iptr->entry,d->pos,d->buf);
+	return d;
+}
 
 #define ROOT_ENTRY 0xff501910
 dir_entry* search_file(char * path, search_log * s_log){
@@ -403,7 +438,7 @@ dir_entry* search_file(char * path, search_log * s_log){
 	}
 }
 
-bool dir_open(char* path,dir * d){
+bool open_dir(char* path,dir * d){
 	search_log s_log;
 	dir_entry * de = search_file(path,&s_log);
 	if(de == ROOT_ENTRY){
@@ -421,10 +456,28 @@ bool dir_open(char* path,dir * d){
 	}	
 }
 
-void dir_close(dir * d){
+bool reopen_dir(char *path,dir * d){
+	search_log s_log;
+	dir_entry * de = search_file(path,&s_log);
+	if(de == ROOT_ENTRY){
+		reload_root(cur_part);
+		return true;
+	}
+	else if(!de){
+		return false;
+	}
+	else {
+		char * buf = sys_malloc(BLOCK_SIZE);
+		reload_dir(de,d,buf);
+		sys_free(buf);	
+		return true;
+	}
+}
+
+void close_dir(dir * d){
 	if(d = &root_dir) return;
 	if(!d->iptr->dirty){
-		inode_close(d->iptr);
+		close_inode(d->iptr);
 		sys_free(d);
 		return;
 	}
@@ -439,7 +492,7 @@ void dir_close(dir * d){
 bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
 	uint_32 dir_size = parent->iptr->entry->fsize;
 	uint_32 sect_offset = dir_size / SECTOR_SIZE;
-	char * buf = sys_malloc(SECTOR_SIZE);
+	char * buf = sys_malloc(2*SECTOR_SIZE);
 	dir_entry * de;
 	//把父目录所有的直接块地址复制出来
 	uint_32 blocks[MAX_FILE_BCNT],i = 0;
@@ -452,14 +505,20 @@ bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
 	if(sect_offset < INODE_PRIMARY_INDEX_CNT){
 		read_hd(cur_part->mydisk,buf,blocks[sect_offset],1);
 		de = buf + (dir_size % SECTOR_SIZE);
-		memcopy(fname,de->fname,strlen(fname));
+		memcopy(de->fname,fname,strlen(fname));
 		de->inode_index = i_no;
 		de->ft = ft;
+		__F;
 		write_hd(cur_part->mydisk,buf,blocks[sect_offset],1);
-		dir_size += sizeof(dir_entry);
+		__F;
+		parent->iptr->entry->fsize += sizeof(dir_entry);
+		//将更新同步到父目录inode中
+		write_inode(parent->iptr->entry,buf);
+		sys_free(buf);
 		return true;
 	}
 	else if(sect_offset > MAX_FILE_BCNT){
+		sys_free(buf);
 		return false;
 	}
 	else{
@@ -468,14 +527,36 @@ bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
 		//重复之前的操作
 		read_hd(cur_part->mydisk,buf,blocks[sect_offset],1);
 		de = buf + (dir_size % SECTOR_SIZE);
-		memcopy(fname,de->fname,strlen(fname));
+		memcopy(de->fname,fname,strlen(fname));
 		de->inode_index = i_no;
 		de->ft = ft;
 		write_hd(cur_part->mydisk,buf,blocks[sect_offset],1);
-		dir_size += sizeof(dir_entry);
+		parent->iptr->entry->fsize += sizeof(dir_entry);
+		write_inode(parent->iptr->entry,buf);
+		sys_free(buf);
 		return true;
 	}	
 	
+}
+
+void print_dir(dir *d){
+	__F;
+	uint_32 dsize = d->iptr->entry->fsize;
+	dir_entry * de = d->buf;
+	int i = 0;
+	for(; i*sizeof(dir_entry) < dsize ;++i){
+		printk("name:%s,i_no:%d,ftype:",de->fname,de->inode_index);
+		switch(de->ft){
+			case FT_REGULAR:
+				{printk("regular file");break;}
+			case FT_DIRECTORY:
+				{printk("directory");break;}
+			case FT_UNKNOW:
+				{printk("unknow type");break;}		
+		}
+		printk("\n");
+		de++;
+	}
 }
 
 /*********************文件操作*************************/
@@ -513,7 +594,7 @@ bool create_file(dir * p,char * fname,ftype ft,uint_32 fsize){
 			return false;
 		}
 	}
-	//向磁盘写入inode，并同步位图
+	//向磁盘写入inode
 	add_inode(i_no,blocks,fsize);
 	//向父目录写入目录项
 	return add_entry(p,fname,i_no,ft);

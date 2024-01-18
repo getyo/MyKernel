@@ -58,19 +58,21 @@ int lst_find(struct list_head * l,struct list_node * node){
 
 void lst_remove(struct list_head * l,struct list_node * node){
 	//DEBUG_MSG("",0);
+	if(!l->head) return;
 	ASSERT(lst_find(l,node));
-	ASSERT(node != NULL && (node->pre != NULL || node->next != NULL));
+	ASSERT(node != NULL);
 	struct list_node * pre = node->pre;
 	struct list_node * next = node->next;
 	if(pre == NULL){
-		l->head = NULL;
-		l->tail = NULL;
+		l->head = next;
+		if(l->head)l->head->pre = NULL;
 	}
 	else{
 		pre->next = next;
-		node->pre = NULL;
-		node->next = NULL;
+		if(pre) next->pre = pre;
 	}
+	node->pre = NULL;
+	node->next = NULL;
 }
 
 void lst_head_insert(struct list_head * l,struct list_node * node){
