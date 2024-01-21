@@ -1,6 +1,7 @@
 #ifndef __FSYS__H__
 #define __FSYS__H__
 #include "ide.h"
+#include "semaphore.h"
 //数据块和扇区本身没有一一对应的关系，但为了方便处理，
 //这里一个数据块就是一个扇区
 typedef struct partition partition;
@@ -79,15 +80,23 @@ void read_root(partition *p);
 //文件打开类型
 typedef enum open_flag{
 	O_RO,	//只读
-	O_WO,	//只写
 	O_WR,	//读写
 	O_CRT	//创建
 }open_flag;
+
+typedef struct fbuf{
+	bool empty;	//为日后优化铺垫，现阶段只要在内存中的fbuf一定不空
+	size_t start_pos;
+	list_node tag;
+	char data[BLOCK_SIZE];
+}fbuf;
+
 //文件描述符
 typedef struct file{
 	uint_32 fpos;		//文件偏移指针
 	open_flag of;
-	inode * i_ptr;
+	inode * iptr;
+	list buf_list;		//元素是fbuf
 
 }file;
 //位图类型
@@ -102,12 +111,12 @@ typedef enum bitmap_type{
 int inode_alloc();
 int block_alloc();
 //向磁盘中添加inode
-void add_inode(uint_32 i_no,uint_32 *blocks,uint_32 fsize);
+bool add_inode(uint_32 i_no,uint_32 *blocks,uint_32 fsize);
 //把位图的修改同步到磁盘
 void bitmap_sycn(uint_32 bit_index,bitmap_type bmt);
 //读取inode,缓存区由主调函数提供，至少两个扇区大小，返回值指向要读取的inode_entry
 inode_entry * read_inode(uint_32 index,char * buf);
-inode_entry * write_inode(inode_entry *ie,char *buf);
+inode_entry * write_inode(uint_32 i_no,inode_entry *ie,char *buf);
 void open_inode(inode *in,uint_32 index);
 void init_inode(inode *i,uint_32 open_cnt,inode_entry *entry);
 void close_inode(inode * in);
@@ -122,12 +131,14 @@ char * write_block(inode_entry * in,uint_32 fpos,char *buf);
 //记录目录锁搜索结果的结构
 typedef struct search_log{
 	char search_path[MAX_DIR_SEARCH_LENGTH];
-	dir * parent;
+	int depth;
 	ftype ft;
 }search_log;
 
 /******************目录相关操作********************/
-dir_entry * search_file(char *path,search_log * s_log);
+//查找成功时，target就是返回值
+//否则返回的NULL，taregt参数指向查找失败的目录项
+dir_entry * search_file(char *path,search_log * s_log,dir_entry * target);
 bool open_dir(char * path,dir * d);
 void close_dir(dir * d);
 bool reopen_dir(char * path,dir *d);
@@ -136,7 +147,12 @@ void print_dir(dir *d);
 #define MAX_FILE_BCNT 140
 #define INODE_PRIMARY_INDEX_CNT 12
 /*******************文件相关操作********************/
+#define MAX_OPEN_FILE_CNT 10
+int file_cnt;	//已经打开的文件数量
+file file_table[MAX_OPEN_FILE_CNT];
+mutex flloc_lock;
 bool create_file(dir * p,char *fname,ftype ft,uint_32 fsize);
-
+//打开文件，返回file_table下标,-1代表失败
+int open_file(char * path,open_flag f);
 
 #endif

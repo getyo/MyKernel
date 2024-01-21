@@ -68,8 +68,9 @@ void lock(struct mutex * m){
 
 void unlock(struct mutex * m){
 	enum int_status old_status = int_disable();
+	thread * t = get_running();
 	//对于重入的线程，只有当重入次数耗尽才会释放锁
-	if(m->reentry_flag > 0)
+	if(t == m->owner && m->reentry_flag > 0)
 		--m->reentry_flag;
 	else{
 		sema_up(&m->smhe);

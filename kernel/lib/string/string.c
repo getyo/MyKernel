@@ -54,15 +54,15 @@ int strcmp(char * s1,char * s2){
 		++c1,++c2;
 	}
 	if(!*c1 && *c2) return -1;
-	else if(*c1 && *c2) return 1;
+	else if(*c1 && !*c2) return 1;
 	else return 0;
 	
 }
 
 uint_32 strlen(char * str){
 	uint_32 len = 0;
-	while(*(str++) != '\0') ++len;
-	return len;
+	while(*str++ != '\0') ++len;
+	return ++len;
 }
 
 char * strcat(char * res,char * s1,char * s2)

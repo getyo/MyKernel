@@ -66,7 +66,7 @@
 #define EF_IFEN 0x200
 #define EF_IFDIS 0
 //根据结构体成员获取结构体
-#define member_offset(struct,member) &((struct *)0)->member
+#define member_offset(struct,member) ( &((struct *)0)->member )
 #define struct_get(struct,member,memb_addr) ( (uint_32)memb_addr - (uint_32)member_offset(struct,member) )
 //文件系统相关
 #define MAX_FNAME_LENGTH 16
@@ -77,4 +77,5 @@
 #define FS_MAGIC 0x568542e0
 #define FS_MAX_INODE_CNT 4096
 #define SUPER_BLOCK_LBA 0x1
+#define DEFAULT_FILE_SIZE BLOCK_SIZE
 #endif

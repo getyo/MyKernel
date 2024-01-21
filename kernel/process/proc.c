@@ -1,5 +1,6 @@
 #include "proc.h"
 #include "fsys.h"
+#include "semaphore.h"
 tss ts;
 extern void switch_on(proc * cur,proc * next);
 extern uint_32 get_paddr(uint_32 vaddr);
@@ -83,8 +84,10 @@ proc * init_proc(proc * p,proc_fun * fun,void * fun_arg){
 		
 	p->proc = p;
 	memset_32(p->fd,MAX_OPEN_FILE_PER_PROC,-1);
-	p->files = sys_malloc(sizeof(file) * MAX_OPEN_FILE_PER_PROC);
-
+	p->file_cnt = 0;
+	p->file_lock = sys_malloc(sizeof(mutex));
+	init_mutex(p->file_lock);
+	
 	init_bit_map(&p->u_vaddr.bit_map);
 	lst_push(&ready_queue,&p->ready_tag);
 	lst_push(&all_queue,&p->all_tag);
@@ -131,5 +134,26 @@ void process_fun(){
 			:);
 }
 
+static int get_fd(proc * p){
+	int fd;
+	lock(p->file_lock);
+	if(p->file_cnt < MAX_OPEN_FILE_PER_PROC)
+		fd = p->file_cnt++;
+	else fd = -1;
+	unlock(p->file_lock);
+	return fd;	
+}
+
+//输入参数是全局file_table的数组下标，返回数据是本进程的文件描述符
+int install_file(proc * p,int fd){
+	int pfd = get_fd(p);
+	if(pfd == -1){
+		printk("%s canont open more files\n",p->name);
+		return pfd;
+	}
+	p->fd[pfd] = sys_malloc(sizeof(file));
+	memcopy(p->fd[pfd],&file_table[fd],sizeof(file));
+	return pfd;	
+}
 
 

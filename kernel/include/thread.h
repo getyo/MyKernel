@@ -68,6 +68,7 @@ struct thread_stack{
 	void * fun_arg;
 };
 
+//需要特别注意，如果这个值设置的过大，会影响到内核栈的大小
 #define MAX_OPEN_FILE_PER_PROC 20	//每个进程最多打开20个文件
 //实质就是Process Control Block
 //线程和进程共用一个结构体
@@ -99,10 +100,11 @@ struct thread{
 	//对于线程来说，他们的fd[0]中保存着进程的fd数组地址
 	//因为线程本身并没有独立的文件资源分配权力
 	int fd[MAX_OPEN_FILE_PER_PROC];
-	//文件描述符数组指针
-	void * files;
+	//当前进程打开的文件数量
+	int file_cnt;
 	
 	list_node general_tag;
+	void* file_lock;
 };
 typedef struct thread thread;
 typedef struct thread proc;

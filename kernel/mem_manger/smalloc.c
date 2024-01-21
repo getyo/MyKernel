@@ -15,14 +15,11 @@ void * alloc_vaddr(enum pool_flags f,int page_cnt){
 	pool * temp;
 	if(f == KERNEL_F){
 		proc * p = get_running();
-		put_int(p);
 		temp = &kernel_vaddr;
 	}
 	else {
-		put_str("u");
 		//获取进程pcb
 		proc * p = get_running();
-		put_int(p);
 		temp = &p->u_vaddr;
 	}
 	ASSERT(page_cnt <= temp->bit_map.size);
@@ -260,15 +257,17 @@ void mblock_cut(arena * a,uint_32 size)
 {
 	mem_block * m;
 	char * ptr = (char *)(a+1);
-	int i = 0,cnt = (PAGE_SIZE - sizeof(arena)) / mdecs[i].type;
-	
+	int i = 0,cnt = (PAGE_SIZE - sizeof(arena)) / size;
 	for(;i < cnt;i++) 
 	{
 		m = (mem_block *)ptr;
 		lock(&mem_lock);
+		/*if(size == 1024)	{
+			printk("mcut : 0x%x\ntail : 0x%x",ptr,a->owner->freelist.tail);
+		}*/
 		lst_push(&a->owner->freelist,&m->tag);
 		unlock(&mem_lock);
-		ptr += a->owner->type;	
+		ptr += size;	
 	}
 }
 
@@ -279,7 +278,6 @@ void sys_free(void * m)
 {
 	pool_flags f;
 	thread * t = get_running();
-	printk("%s\n",t->name);
 	mem_block * mb = m;
 	if((uint_32)t->page_dir == 0x100000)
 		f = KERNEL_F;
@@ -300,7 +298,6 @@ void sys_free(void * m)
 	int i = 0;
 	int cnt = (PAGE_SIZE - sizeof(arena)) / a->owner->type;
 	if(--a->cnt <= 0){
-		__F;
 		while(i < cnt){
 			if(elem != m)
 				lst_remove(&a->owner->freelist,elem);
@@ -314,7 +311,6 @@ void sys_free(void * m)
 	}
 end:	
 	unlock(&mem_lock);
-	printk("%s\n",t->name);
 	return;
 }
 

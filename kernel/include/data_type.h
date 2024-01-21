@@ -8,7 +8,7 @@ typedef unsigned char uint_8;
 typedef unsigned short uint_16;
 typedef unsigned int uint_32;
 typedef unsigned long long uint_64;
-typedef uint_32 size_t;
+typedef uint_64 size_t;
 enum bool{
 	false = 0,true = 1
 };

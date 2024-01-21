@@ -113,13 +113,27 @@ void fsys_init(){
 			//但现阶段不做这个工作
 		}
 	}
+	
+	memset_8(&file_table,sizeof(file) * MAX_OPEN_FILE_CNT,0);
+	file_cnt = 0;
+	init_mutex(&flloc_lock);
+	
+	//由于初始化顺序问题，main进程的文件相关参数在这里初始化
+	proc * p = get_running();
+#ifdef __DEBUG__
+	ASSERT(!strcmp(p->name,"main"));
+#endif
+	memset_32(p->fd,MAX_OPEN_FILE_PER_PROC,-1);
+	p->file_cnt = 0;
+	p->file_lock = sys_malloc(sizeof(mutex));
+	init_mutex(p->file_lock);	
 }
 
 void read_root(partition * p){
 	cur_part = p;
 	p->root = &root_dir;
 	//读入root的inode
-	char * buf = sys_malloc(sizeof(SECTOR_SIZE * 2));
+	char * buf = sys_malloc(SECTOR_SIZE * 2);
 	inode_entry * root_entry = read_inode(p->sb->root_index,buf);
 	p->root->iptr = sys_malloc(sizeof(inode));
 	init_inode(p->root->iptr,1,root_entry);
@@ -139,7 +153,7 @@ void reload_root(){
 bool mount (list_node * tag,uint_32 arg){
 	partition * p = struct_get(partition,tag,tag);
 	char * name = (char *) arg;
-	if(strcmp(p->name,name)) return true;
+	if(strcmp(p->name,name)) return false;
 	//读入超级块
 	super_block * buf = sys_malloc(SECTOR_SIZE);
 	ASSERT(buf != NULL);
@@ -171,7 +185,7 @@ bool mount (list_node * tag,uint_32 arg){
 	print_dir(&root_dir);
 	printk("sb_block:%d\n",p->sb->block_start);
 	//print_dir(&root_dir);
-	return false;
+	return true;
 }
 
 
@@ -212,9 +226,8 @@ inode_entry * read_inode(uint_32 index,char * buf){
 	return buf + byte_st;
 }
 
-inode_entry * write_inode(inode_entry * ie,char *buf){
-	__F;
-	uint_32 byte_st = ie->index * sizeof(inode_entry);
+inode_entry * write_inode(uint_32 i_no,inode_entry * ie,char *buf){
+	uint_32 byte_st = i_no * sizeof(inode_entry);
 	uint_32 sect_addr = byte_st / SECTOR_SIZE;	
 	inode_entry * buf_dirty = buf + (byte_st % SECTOR_SIZE);
 	//由于写只能以扇区为单位，所以先读后写
@@ -279,12 +292,8 @@ void open_inode(inode * i,uint_32 index){
 }
 
 void reopen_inode(inode * i,uint_32 index){
-	__F;
-	printk("0x%x\n",get_running());
 	char * buf = sys_malloc(SECTOR_SIZE * 2);
-	__F;
 	inode_entry * entry = read_inode(index,buf);
-	
 	i->dirty = false;
 	memcopy(i->entry,entry,sizeof(inode_entry));	
 	sys_free(buf);
@@ -305,7 +314,7 @@ void init_inode(inode * i,uint_32 open_cnt,inode_entry * entry){
 void close_inode(inode * in){
 	if(in->dirty){
 		char * buf = sys_malloc(SECTOR_SIZE*2);
-		write_inode(in->entry,buf);
+		write_inode(in->entry->index,in->entry,buf);
 		sys_free(buf);
 	}
 	sys_free(in->entry);
@@ -316,11 +325,23 @@ int inode_alloc(){
 	return bit_alloc(cur_part->inode_bm,1);
 }
 
+void inode_free(uint_32 index){
+	bit_reset(cur_part->inode_bm,index);
+}
+
 int block_alloc(){
 	return bit_alloc(cur_part->block_bm,1);
 }
 
-void add_inode(uint_32 i_no,uint_32 * blocks,uint_32 fsize){
+void block_free(uint_32 index){
+	bit_reset(cur_part->block_bm,index);
+}
+
+bool add_inode(uint_32 i_no,uint_32 * blocks,uint_32 fsize){
+	if(i_no >= FS_MAX_INODE_CNT){
+		printk("file system cann't create more files\n");
+		return false;
+	}
 	inode_entry * ie = sys_malloc(sizeof(inode_entry));
 	ie->index = i_no;
 	ie->fsize = fsize;
@@ -331,9 +352,10 @@ void add_inode(uint_32 i_no,uint_32 * blocks,uint_32 fsize){
 	}
 	
 	char * buf = sys_malloc(2* SECTOR_SIZE);
-	write_inode(ie,buf);
+	write_inode(ie->index,ie,buf);
 	sys_free(buf);
 	sys_free(ie);
+	return true;
 }
 
 /***********************目录操作*************************/
@@ -388,19 +410,32 @@ static dir * reload_dir(dir_entry *de,dir * d,char *buf){
 	return d;
 }
 
+static int file_depth(char * path){
+	char * it = path;
+	int depth = 1;
+	if(*it == '/') ++it;
+	while(*it){
+		if(*it != '/') ++it;
+		++depth;
+		++it;
+	}
+	return depth;
+}
+
 #define ROOT_ENTRY 0xff501910
-dir_entry* search_file(char * path, search_log * s_log){
+dir_entry* search_file(char * path, search_log * s_log,dir_entry * target){
+	s_log->depth = 1;
 	//根目录直接返回
 	if(!strcmp(path,"/") || !strcmp(path,"/.")
 		|| !strcmp(path,"/..")){
 		s_log->search_path[0] = '\0';
-		s_log->parent = &root_dir;
 		s_log->ft = FT_DIRECTORY;
 		return ROOT_ENTRY;
 	}	
+#ifdef __DEBUG__
 	ASSERT(strlen(path) <= MAX_DIR_SEARCH_LENGTH);
 	ASSERT(path[0] == '/');
-
+#endif
 	memset_8(s_log->search_path,MAX_DIR_SEARCH_LENGTH,0);
 	dir * parent = &root_dir;
 	char * dir_buf = sys_malloc(sizeof(dir));
@@ -408,68 +443,95 @@ dir_entry* search_file(char * path, search_log * s_log){
 	//sp指向search_path中最后一部分，即当前搜索项
 	char * sp = s_log->search_path;
 	char * buf = sys_malloc(2*SECTOR_SIZE);
-
 	while(true){
+		//printk("sp:%s\n",sp);
 		strcat(sp,sp,"/");
 		++sp;
-
+		++s_log->depth;
+		
 		path = parse_path(path,sp);
 		de = find_in_dir(sp,parent);
-		s_log->parent = parent;
+		//printk("fname : %s\n",sp);
 		if(!de){
+			printk("file not find in directory:%s\n",s_log->search_path);
 			s_log->ft = FT_UNKNOW;
 			return NULL;
 		}
 		switch(de->ft){
 			case FT_DIRECTORY:{
 				s_log->ft = FT_DIRECTORY;
-				if(!*path)	parent = read_dir(de,dir_buf,buf);
-				else	return de;
+				if(*path){
+					parent = read_dir(de,dir_buf,buf);
+					memcopy(target,de,sizeof(dir_entry));
+				}
+				else	goto end;
 				break;
 			}
 			case FT_REGULAR:{
 				s_log->ft = FT_REGULAR;
-				if(!*path)	return de;
+				if(!*path)	goto end;
 				else	return NULL;
 				break;
 			}
 			default:break;
 		}
 	}
+	
+end:
+	memcopy(target,de,sizeof(dir_entry));
+	sys_free(buf);
+	sys_free(dir_buf);
+	return target;
 }
 
 bool open_dir(char* path,dir * d){
-	search_log s_log;
-	dir_entry * de = search_file(path,&s_log);
-	if(de == ROOT_ENTRY){
+	search_log *s_log = sys_malloc(sizeof(search_log));
+	dir_entry * de = sys_malloc(sizeof(dir_entry));
+	dir_entry * target = search_file(path,s_log,de);
+	sys_free(s_log);
+	if(target == ROOT_ENTRY){
 		*d = root_dir;
+		sys_free(de);
 		return true;
 	}
-	else if(!de){
+	else if(!target){
+		sys_free(de);
 		return false;
 	}
 	else {
+#ifdef __DEBUG__
+		ASSERT(de == target);
+#endif
 		char * buf = sys_malloc(BLOCK_SIZE);
 		read_dir(de,d,buf);
 		sys_free(buf);
+		sys_free(de);
 		return true;
 	}	
 }
 
 bool reopen_dir(char *path,dir * d){
-	search_log s_log;
-	dir_entry * de = search_file(path,&s_log);
-	if(de == ROOT_ENTRY){
+	search_log * s_log = sys_malloc(sizeof(search_log));
+	dir_entry * de = sys_malloc(sizeof(dir_entry));
+	dir_entry * target = search_file(path,s_log,de);
+	sys_free(s_log);
+	if(target == ROOT_ENTRY){
 		reload_root(cur_part);
+		sys_free(de);
 		return true;
 	}
-	else if(!de){
+	else if(!target){
+		sys_free(de);
 		return false;
 	}
 	else {
+#ifdef __DEBUG__
+		ASSERT(de == target);
+#endif
 		char * buf = sys_malloc(BLOCK_SIZE);
 		reload_dir(de,d,buf);
 		sys_free(buf);	
+		sys_free(de);
 		return true;
 	}
 }
@@ -483,7 +545,7 @@ void close_dir(dir * d){
 	}
 	//对于修改过的目录
 	char * buf = sys_malloc(2*SECTOR_SIZE);
-	write_inode(d->iptr->entry,buf);
+	write_inode(d->iptr->entry->index,d->iptr->entry,buf);
 	sys_free(buf);
 	write_block(d->iptr,d->pos,&d->buf);
 	return;		
@@ -508,16 +570,15 @@ bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
 		memcopy(de->fname,fname,strlen(fname));
 		de->inode_index = i_no;
 		de->ft = ft;
-		__F;
 		write_hd(cur_part->mydisk,buf,blocks[sect_offset],1);
-		__F;
 		parent->iptr->entry->fsize += sizeof(dir_entry);
 		//将更新同步到父目录inode中
-		write_inode(parent->iptr->entry,buf);
+		write_inode(parent->iptr->entry->index,parent->iptr->entry,buf);
 		sys_free(buf);
 		return true;
 	}
 	else if(sect_offset > MAX_FILE_BCNT){
+		printk("directory has not enough space for %s\n",fname);
 		sys_free(buf);
 		return false;
 	}
@@ -532,7 +593,7 @@ bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
 		de->ft = ft;
 		write_hd(cur_part->mydisk,buf,blocks[sect_offset],1);
 		parent->iptr->entry->fsize += sizeof(dir_entry);
-		write_inode(parent->iptr->entry,buf);
+		write_inode(parent->iptr->entry->index,parent->iptr->entry,buf);
 		sys_free(buf);
 		return true;
 	}	
@@ -540,7 +601,6 @@ bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
 }
 
 void print_dir(dir *d){
-	__F;
 	uint_32 dsize = d->iptr->entry->fsize;
 	dir_entry * de = d->buf;
 	int i = 0;
@@ -562,23 +622,27 @@ void print_dir(dir *d){
 /*********************文件操作*************************/
 
 bool create_file(dir * p,char * fname,ftype ft,uint_32 fsize){
+	int failed_flag = 0;
 	if(strlen(fname) > MAX_FNAME_LENGTH){
 		printk("file name is longer than limit : %d characters\n",MAX_FNAME_LENGTH);
-		return false;
+		failed_flag = 1;
+		goto rollback;
 	}
 		
 	//分配inode
 	int i_no = inode_alloc();
 	if(i_no == -1) {
 		printk("allocate inode failed\n");
-		return false;
+		failed_flag = 2;
+		goto rollback;
 	}
 	bitmap_sycn(i_no,BM_INODE);
 	//根据文件大小分配对应的块，最少为1块
 	uint_32 bcnt = DIV_ROUND_UP(fsize,SECTOR_SIZE);
 	if(bcnt > MAX_FILE_BCNT) {
 		printk("file size is too big\n");
-		return false;
+		failed_flag = 3;
+		goto rollback;
 	}
 	uint_32 * blocks = sys_malloc(bcnt * 4);
 	uint_32 i = 0;
@@ -591,16 +655,176 @@ bool create_file(dir * p,char * fname,ftype ft,uint_32 fsize){
 		}
 		else{
 			printk("disk has not enough space\n");
-			return false;
+			failed_flag = 4;
+			goto rollback;
 		}
 	}
 	//向磁盘写入inode
-	add_inode(i_no,blocks,fsize);
+	if(!add_inode(i_no,blocks,fsize)){
+		failed_flag = 5;
+		goto rollback;
+	}
 	//向父目录写入目录项
-	return add_entry(p,fname,i_no,ft);
+	if(!add_entry(p,fname,i_no,ft)){
+		failed_flag = 6;
+		goto rollback;
+	}
+	else{
+		sys_free(blocks);
+		return true;
+	}
+rollback:
+	printk("failed_flag:%d\n",failed_flag);
+	switch(failed_flag){
+		case 6:{}
+		case 5:{
+			inode_entry * entry0 = sys_malloc(sizeof(inode_entry));
+			memset_8(entry0,sizeof(inode_entry),0);
+			char * buf = sys_malloc(SECTOR_SIZE*2);
+			write_inode(i_no,entry0,buf);	
+			sys_free(entry0);
+			sys_free(buf);
+		}
+		case 4:{
+			for(--i;i>=0;--i){
+				block_free(blocks[i]);
+			}
+		}
+		case 3:{}
+		case 2:{
+			inode_free(i_no);
+		}
+		case 1:{}
+		default: break;
+	}
+	sys_free(blocks);
+	return false;
 }	
 
+//把目录项指向的文件安装到文件file_table中
+int load_file(dir_entry * de,open_flag of){
+	if(file_cnt >= MAX_OPEN_FILE_CNT){
+		printk("the number of file be opened has reach the limit\n");
+		return -1;
+	}
+	file * f = &file_table[file_cnt];
+	inode * in = sys_malloc(sizeof(inode));
+	open_inode(in,de->inode_index);
+	f->iptr = in;
+	f->fpos = 0;
+	f->of = of;
+	init_list(&f->buf_list);
+	return file_cnt++;
+}
 
+//比较器用于判断fbuf中是否含有fpos所指向的内容
+static bool fpos_cmp(list_node *tag,size_t fpos){
+	fbuf * fb = struct_get(fbuf,tag,tag);
+	int_64 diff = fpos - fb->start_pos;
+	if(diff >= 0 && diff < BLOCK_SIZE)
+		return true;
+	else return false;
+} 
+
+void* read_file(int fd){
+	file * f = &file_table[fd];
+	list_node * tag = lst_find_elem(&f->buf_list,fpos_cmp,f->fpos);
+	fbuf * fb;
+	if(!tag){
+		fb = sys_malloc(sizeof(fbuf));
+		fb->start_pos = f->fpos & BLOCK_SIZE; 
+		fb->empty = false;
+		read_block(f->iptr->entry,f->fpos,fb->data);
+	}
+	else	fb = struct_get(fbuf,tag,tag);
+	return fb->data + (f->fpos & ~BLOCK_SIZE);
+	
+}
+
+int_64 find_in_ftable(dir_entry * target){
+	size_t fd;
+	for(fd = 0;fd < file_cnt;++fd){
+		if(file_table[fd].iptr->entry->index == target->inode_index)
+			return fd;
+	}
+	return -1;
+}
+
+int open_file(char * path,open_flag of){
+	int fd = -1;
+	if(path[strlen(path)-1] == '/'){
+		printk("directory cann't be opened\n");
+		return fd;
+	}
+	
+	search_log * slog = sys_malloc(sizeof(search_log));
+	dir_entry * de = sys_malloc(sizeof(dir_entry));
+	dir_entry * target = search_file(path,slog,de);
+	int depth = file_depth(path);
+	if(!target){
+#ifdef __DEBUG__
+		ASSERT(depth >= slog->depth);
+#endif
+		if(depth > slog->depth) return fd;
+		//如果是创造文件，那成功读取到文件所在目录时，
+		//就要在该目录下没有便创造该文件
+		if(of != O_CRT)	return fd;
+		//从路径中取出文件名
+		char * it = path + strlen(path) -1;
+		while(*it != '/') --it;
+		char * name = it+1;
+		create_file(de,name,FT_REGULAR,DEFAULT_FILE_SIZE);
+		target = search_file(path,slog,de);
+		//剩下的操作和按写文件打开相同	
+#ifdef __DEBUG__
+		ASSERT(target);
+#endif
+		
+	}
+	lock(&flloc_lock);
+	switch(de->ft){
+		case FT_UNKNOW:{
+			printk("unkonw file type\n");
+			break;
+		}
+		case FT_REGULAR:{
+			fd = find_in_ftable(target);	
+			if(fd != -1){
+				++file_table[fd].iptr->open_cnt;
+			}
+			else fd = load_file(target,of);
+
+			if(fd == -1) return fd;
+			else{
+				proc * curp = get_running();
+				lst_push(&file_table[fd].iptr->proc_list,curp);
+			}
+			read_file(fd);
+			
+			switch(of){
+				case O_RO:{
+					break;
+				}
+				case O_CRT:{}
+				case O_WR:{
+					file_table[fd].iptr->is_writing = true;
+					break;
+				}
+				default: break;
+			}
+			break;
+		}
+		case FT_DIRECTORY:{
+			printk("directory cannot be opened\n");
+			return;
+		}
+		default : break;
+	}	
+	unlock(&flloc_lock);
+	proc * p = get_running()->proc;
+	fd = install_file(p,fd);
+	return fd;
+}
 
 
 

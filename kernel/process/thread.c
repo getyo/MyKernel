@@ -96,7 +96,7 @@ struct thread * create_thread(char * name,uint_32 priority,thread_fun * function
 	t->total_tick = 0;
 	t->stack_magic = 0x78ffad09;
 	t->page_dir = NULL;
-	t->proc = get_running();
+	t->proc = get_running()->proc;
 	return t;
 }
 
@@ -111,6 +111,7 @@ void init_thread(struct thread *t,thread_fun * function,void * arg){
 	t_st->fun_arg = arg;
 	t_st->esi = t_st->edi = t_st->ebp = t_st->ebx = 0;
 	t->fd[0] = ((thread *)t->proc)->fd;
+	t->file_cnt = -1;
 	
 	lst_push(&ready_queue,&t->ready_tag);
 	lst_push(&all_queue,&t->all_tag);
@@ -129,7 +130,8 @@ void init_main(){
 	t->stack_magic = 0x78ffad09;
 	lst_push(&all_queue,&t->all_tag);
 	t->page_dir = (void *)0x100000;
-	
+	t->proc = t;	
+
 	//使得主函数执行完能正常返回调度器
 	*(uint_32 *)(MAIN_PCB + PAGE_SIZE - 4) = thread_finished;
 }

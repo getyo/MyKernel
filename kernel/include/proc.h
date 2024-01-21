@@ -58,4 +58,5 @@ void create_proc_page(proc * p);
 //执行进程函数
 void process_fun();
 void exchange_esp0 (thread * t);
+int install_file(proc *p,int fd);
 #endif
