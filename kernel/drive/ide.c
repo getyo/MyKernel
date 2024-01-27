@@ -278,7 +278,7 @@ bool out_partition(list_node * tag,uint_32 arg)
 {
 	partition * p = struct_get(partition,tag,tag); 
 	printk("%s    %d    %d \n",p->name,p->start_lba,p->lba_cnt);
-	return true;
+	return false;
 }
 
 void identify_disk(disk * hd)

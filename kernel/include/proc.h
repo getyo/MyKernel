@@ -59,4 +59,5 @@ void create_proc_page(proc * p);
 void process_fun();
 void exchange_esp0 (thread * t);
 int install_file(proc *p,int fd);
+void uninstall_file(proc * p,int fd);  
 #endif

@@ -5,6 +5,10 @@ void init_condition_var(condition_var * cv,condition_fun fun,void * fun_arg){
 	init_list(&cv->waiter);
 }
 
+void cv_set_arg(condition_var * cv,void * arg){
+	cv->fun_arg = arg;
+}
+
 void conditional_block(condition_var * cv){
 	bool staisfy = cv->fun(cv->fun_arg);
 	if(!staisfy) return;

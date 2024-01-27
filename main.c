@@ -43,9 +43,14 @@ int main(void){
 		printk("create_file success\n");
 	reopen_dir("/",&root_dir);
 	print_dir(&root_dir);
-	int fd = open_file("/test",O_CRT);
+	int fd = open_file("/test",O_WR);
 	if(fd != -1)
 		printk("open file success\n");
+	char * rbuf = sys_malloc(BLOCK_SIZE);
+	set_fpos(fd,0);
+	read_file(fd,rbuf,BLOCK_SIZE);
+	printk("%s",rbuf);
+	close_file(fd);
 	return 0;
 }
 

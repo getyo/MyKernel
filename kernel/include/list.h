@@ -18,6 +18,7 @@ struct list_node{
 
 typedef struct list_node list_node;
 typedef bool cmp_fun_type (list_node * tag,uint_32 arg);
+typedef void free_fun (list_node * tag);
 
 struct list_head * init_list(struct list_head * queue);
 void lst_push(struct list_head *,struct list_node *);

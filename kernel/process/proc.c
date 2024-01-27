@@ -135,13 +135,34 @@ void process_fun(){
 }
 
 static int get_fd(proc * p){
-	int fd;
+	int fd = -1;
 	lock(p->file_lock);
 	if(p->file_cnt < MAX_OPEN_FILE_PER_PROC)
-		fd = p->file_cnt++;
-	else fd = -1;
+		p->file_cnt++;
+	else 	goto end;
+	int i = 0;
+	for(;i < MAX_OPEN_FILE_PER_PROC;++i){
+		if(p->fd[i] == -1){
+			fd = i;
+			break;
+		}
+	}
+#ifdef __DEBUG__
+	ASSERT(fd != -1);
+#endif
+end:
 	unlock(p->file_lock);
 	return fd;	
+}
+
+static void free_fd(proc * p,int fd){
+#ifdef __DEBUG__
+	ASSERT(fd < MAX_OPEN_FILE_PER_PROC);
+#endif
+	lock(p->file_lock);
+	--p->file_cnt;
+	p->fd[fd] = -1;
+	unlock(p->file_lock);
 }
 
 //输入参数是全局file_table的数组下标，返回数据是本进程的文件描述符
@@ -156,4 +177,6 @@ int install_file(proc * p,int fd){
 	return pfd;	
 }
 
-
+void uninstall_file(proc * p,int fd){
+	free_fd(p,fd);	
+}

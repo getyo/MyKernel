@@ -32,6 +32,9 @@ typedef struct inode_entry{
 
 typedef struct inode{
 	uint_32 open_cnt;	//打开计数器，用于关闭文件
+	//注意这里的dirty不是文件被写的标志，只是inode被写的标志
+	condition_var * write_cv;	//写文件的条件变量
+	mutex * write_lock;		//写文件的互斥量
 	bool is_writing;
 	bool dirty;
 	inode_entry * entry;
@@ -87,15 +90,19 @@ typedef enum open_flag{
 typedef struct fbuf{
 	bool empty;	//为日后优化铺垫，现阶段只要在内存中的fbuf一定不空
 	size_t start_pos;
+	bool dirty;
 	list_node tag;
 	char data[BLOCK_SIZE];
 }fbuf;
 
 //文件描述符
 typedef struct file{
+	char * fname;
 	uint_32 fpos;		//文件偏移指针
 	open_flag of;
+	size_t fsize;		//此大小是文件在内存中的大小，每个进程独立，在关闭文件时才回同步到inode
 	inode * iptr;
+	bool dirty;
 	list buf_list;		//元素是fbuf
 
 }file;
@@ -154,5 +161,8 @@ mutex flloc_lock;
 bool create_file(dir * p,char *fname,ftype ft,uint_32 fsize);
 //打开文件，返回file_table下标,-1代表失败
 int open_file(char * path,open_flag f);
-
+bool read_file(int fd,char * dst,size_t size);
+bool write_file(int fd,char * src,size_t size);
+bool close_file(int fd);
+void set_fpos(int fd,size_t pos);
 #endif

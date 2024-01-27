@@ -115,10 +115,11 @@ bool lst_empty(struct list_head * list){
 list_node * lst_traverse(list * l,bool action(list_node *,uint_32 arg),uint_32 arg)
 {
 	list_node * i = l->head;
-	if (!i) printk("list is empty\n");
+	//if (!i) printk("list is empty\n");
 	bool res = false;
-	while(i != NULL && !res){
-		res = action(i,arg);
+	while(i != NULL){
+		if(action(i,arg))
+			return i;
 		i = i->next;
 	}
 	return i;
@@ -132,7 +133,10 @@ list_node * lst_find_elem(list * l,cmp_fun_type compareor,uint_32 arg){
 //在第一个满足比较器的节点之前插入tag
 list_node * lst_insert_elem(list * l,list_node * tag,cmp_fun_type compareor,uint_32 arg){
 	list_node * n = lst_find_elem(l,compareor,arg);
-	if(n == NULL) return NULL;
+	//没有的话就在头节点插入	
+	if(n == NULL) {
+		lst_head_insert(l,tag);
+	}
 	//在一个满足条件的节点之前插入元素
 	if(n->pre == NULL){
 		//如果返回的第一个节点
@@ -141,6 +145,7 @@ list_node * lst_insert_elem(list * l,list_node * tag,cmp_fun_type compareor,uint
 	tag->pre = n->pre;
 	tag->next = n;
 	n->pre = tag;
+	return tag;
 }
 
 //移除第一个满足比较器的节点，如果没有满足元素的节点则返回false
@@ -153,6 +158,12 @@ bool lst_remove_elem(list * l,cmp_fun_type compareor,uint_32 arg){
 	}
 }
 
-
+void lst_free_elem(list * l,free_fun f){
+	list_node * it;
+	while(!lst_empty(l)){
+		it = lst_pop(l);
+		f(it);
+	}	
+}
 
 

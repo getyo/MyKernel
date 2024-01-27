@@ -3,6 +3,8 @@
 #include "string.h"
 #include "global.h"
 #include "smalloc.h"
+#include "semaphore.h"
+#include "condition_var.h"
 
 void super_block_init(super_block * sb,partition * p){
 	//构建并写入超级块
@@ -73,7 +75,7 @@ void fsys_init(){
 			if(!p->lba_cnt) continue;
 			//构建超级块
 			read_hd(hd,&sb,p->start_lba + SUPER_BLOCK_LBA,1);
-			if(true){
+			if(!sb.magic_num){
 				//如果没有文件系统，则创建相应的文件系统
 				super_block_init(&sb,p);
 				write_hd(hd,&sb,p->start_lba + SUPER_BLOCK_LBA,1);
@@ -182,8 +184,8 @@ bool mount (list_node * tag,uint_32 arg){
 	
 	//读入根目录
 	read_root(p);
-	print_dir(&root_dir);
-	printk("sb_block:%d\n",p->sb->block_start);
+	//print_dir(&root_dir);
+	//printk("sb_block:%d\n",p->sb->block_start);
 	//print_dir(&root_dir);
 	return true;
 }
@@ -299,10 +301,20 @@ void reopen_inode(inode * i,uint_32 index){
 	sys_free(buf);
 }
 
-//本函数提供inode结构中entry的内容分配，需要注意在关闭文件时释放
+//判断当前文件的inode是否可写的函数
+//传入参数是inode指针
+bool can_be_writeen(inode * iptr){
+	return iptr->is_writing;
+}
+
+//本函数提供inode结构中entry，write_cv的内存分配，需要注意在关闭文件时释放
 void init_inode(inode * i,uint_32 open_cnt,inode_entry * entry){
 	i->open_cnt = open_cnt;
 	i->is_writing = false;
+	i->write_cv  = sys_malloc(sizeof(condition_var));
+	i->write_lock = sys_malloc(sizeof(mutex));
+	init_mutex(i->write_lock);
+	init_condition_var(i->write_cv,can_be_writeen,i);
 	i->dirty = false;
 	i->entry = sys_malloc(sizeof(inode_entry));
 	memcopy(i->entry,entry,sizeof(inode_entry));
@@ -318,6 +330,8 @@ void close_inode(inode * in){
 		sys_free(buf);
 	}
 	sys_free(in->entry);
+	sys_free(in->write_cv);
+	sys_free(in->write_lock);
 	return;	
 }
 
@@ -347,8 +361,15 @@ bool add_inode(uint_32 i_no,uint_32 * blocks,uint_32 fsize){
 	ie->fsize = fsize;
 	uint_32 bcnt = DIV_ROUND_UP(fsize,SECTOR_SIZE);	
 	uint_32 i = 0;
-	for(;i < bcnt;++i){
+	for(;i < bcnt && i < INODE_PRIMARY_INDEX_CNT;++i){
 		ie->block[i] = blocks[i] + cur_part->sb->block_start;
+	}
+	if(bcnt > INODE_PRIMARY_INDEX_CNT){
+		int blk = block_alloc();
+		uint_32 * buf = sys_malloc(BLOCK_SIZE);
+		memcopy(buf,blocks + INODE_PRIMARY_INDEX_CNT,4 * (bcnt - INODE_PRIMARY_INDEX_CNT));
+		write_hd(cur_part->mydisk,buf,blk,1);
+		ie->block[INODE_PRIMARY_INDEX_CNT] = blk;
 	}
 	
 	char * buf = sys_malloc(2* SECTOR_SIZE);
@@ -372,7 +393,7 @@ static char * parse_path(char * path,char * search_path){
 }
 
 static dir_entry * find_in_dir(char * fname,dir * d){
-	dir_entry * di = &d->buf;
+	dir_entry * di = d->buf;
 	while(true){
 		if(!strcmp(fname,di->fname)) 
 			return di;
@@ -628,7 +649,11 @@ bool create_file(dir * p,char * fname,ftype ft,uint_32 fsize){
 		failed_flag = 1;
 		goto rollback;
 	}
-		
+	if(find_in_dir(fname,p)){
+		printk("file already exsit\n");
+		return false;
+	}
+
 	//分配inode
 	int i_no = inode_alloc();
 	if(i_no == -1) {
@@ -702,7 +727,7 @@ rollback:
 }	
 
 //把目录项指向的文件安装到文件file_table中
-int load_file(dir_entry * de,open_flag of){
+static int load_file(dir_entry * de,open_flag of){
 	if(file_cnt >= MAX_OPEN_FILE_CNT){
 		printk("the number of file be opened has reach the limit\n");
 		return -1;
@@ -710,9 +735,12 @@ int load_file(dir_entry * de,open_flag of){
 	file * f = &file_table[file_cnt];
 	inode * in = sys_malloc(sizeof(inode));
 	open_inode(in,de->inode_index);
+	f->fname = sys_malloc(MAX_FNAME_LENGTH);
+	memcopy(f->fname,de->fname,MAX_FNAME_LENGTH);
 	f->iptr = in;
 	f->fpos = 0;
 	f->of = of;
+	f->fsize = in->entry->fsize;
 	init_list(&f->buf_list);
 	return file_cnt++;
 }
@@ -720,13 +748,18 @@ int load_file(dir_entry * de,open_flag of){
 //比较器用于判断fbuf中是否含有fpos所指向的内容
 static bool fpos_cmp(list_node *tag,size_t fpos){
 	fbuf * fb = struct_get(fbuf,tag,tag);
-	int_64 diff = fpos - fb->start_pos;
+	int_32 diff = fpos - fb->start_pos;
 	if(diff >= 0 && diff < BLOCK_SIZE)
 		return true;
 	else return false;
 } 
 
-void* read_file(int fd){
+//此函数和seek不同，seek是操作单个进程的文件表
+//此函数直接操作内核中所有文件的打开文件表
+//seek的操作不需要同步到file_table，因为seek仅仅改变文件位置
+//对于总的文件表来说这个东西没有意义
+//但是改变文件名的话，需要同步到file_table
+static void* read_file_to_block(int fd){
 	file * f = &file_table[fd];
 	list_node * tag = lst_find_elem(&f->buf_list,fpos_cmp,f->fpos);
 	fbuf * fb;
@@ -734,14 +767,18 @@ void* read_file(int fd){
 		fb = sys_malloc(sizeof(fbuf));
 		fb->start_pos = f->fpos & BLOCK_SIZE; 
 		fb->empty = false;
+		fb->dirty = false;
+		if(f->fpos > f->iptr->entry->fsize){
+			printk("out of file size :file %s size %d fpos %d\n",f->fname,\
+				f->iptr->entry->fsize,f->fpos);
+		}
 		read_block(f->iptr->entry,f->fpos,fb->data);
 	}
 	else	fb = struct_get(fbuf,tag,tag);
 	return fb->data + (f->fpos & ~BLOCK_SIZE);
-	
 }
 
-int_64 find_in_ftable(dir_entry * target){
+static int_64 find_in_ftable(dir_entry * target){
 	size_t fd;
 	for(fd = 0;fd < file_cnt;++fd){
 		if(file_table[fd].iptr->entry->index == target->inode_index)
@@ -799,7 +836,7 @@ int open_file(char * path,open_flag of){
 				proc * curp = get_running();
 				lst_push(&file_table[fd].iptr->proc_list,curp);
 			}
-			read_file(fd);
+			read_file_to_block(fd);
 			
 			switch(of){
 				case O_RO:{
@@ -807,7 +844,6 @@ int open_file(char * path,open_flag of){
 				}
 				case O_CRT:{}
 				case O_WR:{
-					file_table[fd].iptr->is_writing = true;
 					break;
 				}
 				default: break;
@@ -826,12 +862,200 @@ int open_file(char * path,open_flag of){
 	return fd;
 }
 
+static bool fbuf_sycn(list_node * tag,inode * i){
+	fbuf * fb = struct_get(fbuf,tag,tag);
+	if(!fb->dirty) return false;
+	write_block(i,fb->start_pos,fb->data);
+	return false;
+}
 
+static void fbuf_free(list_node * tag){
+	sys_free(struct_get(fbuf,tag,tag));
+}
 
+bool close_file(int fd){
+	proc * p = get_running()->proc;
+	file * f = (file *)p->fd[fd];
+	inode * in = f->iptr;
+	if(f->dirty){	
+		conditional_block(in->write_cv);
+		lock(in->write_lock);
+		in->is_writing = true;
+		//分配所需要的所有block
+		uint_32 old_bcnt = DIV_ROUND_UP(in->entry->fsize,BLOCK_SIZE);
+		uint_32 bcnt = DIV_ROUND_UP(f->fsize,BLOCK_SIZE) - old_bcnt;
+		if(bcnt){
+			//如果需要额外分配块
+			int * blocks = sys_malloc(4 * MAX_FILE_BCNT);
+			//先读入当前所有的块
+			int i = 0;
+			for(;i < INODE_PRIMARY_INDEX_CNT;++i)
+				blocks[i] = in->entry->block[i];
+			//如果存在间接块
+			if(in->entry->block[i]){
+#ifdef __DEBUG__
+				ASSERT(DIV_ROUND_UP(in->entry->fsize,BLOCK_SIZE) >= (INODE_PRIMARY_INDEX_CNT + 1));
+#endif
+				read_hd(cur_part->mydisk,blocks + INODE_PRIMARY_INDEX_CNT,in->entry->block[i],1);
+				i = old_bcnt;
+			}
+			//分配所需的额外块	
+			for(;i < bcnt + old_bcnt;++i){
+				blocks[i] = block_alloc();
+				if(blocks[i] == -1){
+					printk("cannot save file,disk has already full\n");
+					//undo
+					for(--i;i >=old_bcnt;--i)
+						block_free(blocks[i]);
+					return false;
+				}
+			}
+			add_inode(in->entry->index,blocks,f->fsize);
+			sys_free(blocks);
+		}
+		lst_traverse(&f->buf_list,fbuf_sycn,in->entry);
+		lst_free_elem(&f->buf_list,fbuf_free);
+		in->is_writing = false;
+		unlock(in->write_lock);
+		conditional_notify(in->write_cv);
+	}
+	lst_remove(&in->proc_list,&p->general_tag);
+	uninstall_file(p,fd);
+	if(lst_empty(&in->proc_list))
+		close_inode(in);
+	sys_free(f->fname);
+	sys_free(f);
+}
 
+int sys_open(char * path,open_flag of){
+	return open_file(path,of);
+}
 
+//把指定位置的块读入并返回该位置的指针
+//end返回了fblock中数据的结束位置	
+char * seek(int fd,uint_32 * end,uint_32 fpos){
+	proc * p = get_running()->proc;
+	file * f = p->fd[fd];
+	list_node * tag = lst_find_elem(&f->buf_list,fpos_cmp,fpos);
+	fbuf * fb;
+	if(!tag){
+		fb = sys_malloc(sizeof(fbuf));
+		fb->start_pos = fpos & BLOCK_SIZE; 
+		fb->empty = false;
+		fb->dirty = false;
+		if(fpos >= f->iptr->entry->fsize){
+			printk("out of file size :file %s size %d fpos %d\n",f->fname,\
+				f->iptr->entry->fsize,fpos);
+			return NULL;
+		}
+		read_block(f->iptr->entry,fpos,fb->data);
+		lst_insert_elem(&f->buf_list,&fb->tag,fpos_cmp,fpos);
+	}
+	else	fb = struct_get(fbuf,tag,tag);
+	*end = fb->data + BLOCK_SIZE;
+	return fb->data + (f->fpos & ~BLOCK_SIZE);
+}
 
+bool read_file(int fd,char * dst,size_t size){
+	proc * p = get_running()->proc;
+	uint_32 pos = ((file*)p->fd[fd])->fpos & BLOCK_SIZE;
+	if(pos >= MAX_FILE_BCNT * SECTOR_SIZE){
+		printk("fpos out of the limit of file's size\n");
+		return false;
+	}
+	uint_32 end;
+	char * src = seek(fd,&end,pos); 
+	size_t down = 0,opbytes = 0;
+#ifdef __DEBUG__
+	ASSERT(src <= end);
+#endif
+	
+	while(true){
+		if(down >= size)
+			return true;
+		if(src >= end){
+			pos += BLOCK_SIZE;
+			src = seek(fd,&end,pos);
+			if(!src) return false;
+		}
+		
+		if(size - down >= BLOCK_SIZE)
+			opbytes = BLOCK_SIZE;
+		else
+			opbytes = size - down;
+		memcopy(dst,src,opbytes);
+		down += opbytes;
+	}
+	return false;
+}
 
+bool write_file (int fd,char * src,size_t size){
+	proc * p = get_running()->proc;
+	file * f = (file *)p->fd[fd];
+	uint_32 pos = f->fpos & BLOCK_SIZE;
+	printk("write pos:0x%x\n",pos);
+	if(pos >= MAX_FILE_BCNT * SECTOR_SIZE){
+		printk("fpos out of the limit of file's size\n");
+		return false;
+	}
+	if(f->fsize < f->fpos + size){
+		f->fsize = f->fpos + size;
+	}
+	uint_32 end;
+	char * dst = seek(fd,&end,pos); 
+	printk("dst : 0x%x\n",dst);
+	//如果dst返回NULL，说明要写的位置实际超出了当前文件大小
+	//那么就把从文件末尾到要写的位置的末尾的所有块一次在内存中分配完成
+	//这里并不会进行磁盘块的分配，只是写到缓存区而已
+	fbuf * fb;
+	if(!dst){
+		int bcnt = DIV_ROUND_UP(size,BLOCK_SIZE);
+		int i;
+		for(i = 0;i < bcnt;++i){
+			fb = sys_malloc(sizeof(fbuf));
+			fb->empty = false;
+			fb->dirty = true;
+			fb->start_pos = pos + i * BLOCK_SIZE;
+			lst_insert_elem(&f->buf_list,&fb->tag,fpos_cmp,pos + i*BLOCK_SIZE);
+		}
+	}
+	size_t down = 0,opbytes = 0;
+#ifdef __DEBUG__
+	ASSERT(dst <= end);
+#endif
+	f->dirty = true;
+	while(true){
+		if(down >= size)
+			return true;
+		if(dst >= end){
+			pos += BLOCK_SIZE;
+			dst = seek(fd,&end,pos);
+			if(!dst) {
+				fb = sys_malloc(sizeof(fbuf));
+				fb->empty = false;
+				fb->dirty = true;
+				fb->start_pos = pos;
+				dst = fb->data;
+			}
+		}
+		
+		if(size - down >= BLOCK_SIZE)
+			opbytes = BLOCK_SIZE;
+		else
+			opbytes = size - down;
+		memcopy(dst,src,opbytes);
+		fb = struct_get(fbuf,data,dst);
+		fb->dirty = true;
+		down += opbytes;
+		f->fpos += opbytes;
+	}
+	return false;
+}
+
+void set_fpos(int fd,size_t pos){
+	file * f = get_running()->fd[fd];
+	f->fpos = pos;
+}
 
 
 
