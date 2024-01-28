@@ -6,6 +6,26 @@
 #include "semaphore.h"
 #include "condition_var.h"
 
+//比较器用于判断fbuf中是否含有fpos所指向的内容
+static bool fpos_cmp(list_node *tag,size_t fpos){
+	fbuf * fb = struct_get(fbuf,tag,tag);
+	int_32 diff = fpos - fb->start_pos;
+	if(diff >= 0 && diff < BLOCK_SIZE)
+		return true;
+	else return false;
+}
+ 
+static bool fbuf_sycn(list_node * tag,inode * i){
+	fbuf * fb = struct_get(fbuf,tag,tag);
+	if(!fb->dirty) return false;
+	write_block(i,fb->start_pos,fb->data);
+	return false;
+}
+
+static void fbuf_free(list_node * tag){
+	sys_free(struct_get(fbuf,tag,tag));
+}
+
 void super_block_init(super_block * sb,partition * p){
 	//构建并写入超级块
 	memset_8(sb,sizeof(super_block),0);
@@ -75,7 +95,7 @@ void fsys_init(){
 			if(!p->lba_cnt) continue;
 			//构建超级块
 			read_hd(hd,&sb,p->start_lba + SUPER_BLOCK_LBA,1);
-			if(!sb.magic_num){
+			if(true){
 				//如果没有文件系统，则创建相应的文件系统
 				super_block_init(&sb,p);
 				write_hd(hd,&sb,p->start_lba + SUPER_BLOCK_LBA,1);
@@ -141,15 +161,65 @@ void read_root(partition * p){
 	init_inode(p->root->iptr,1,root_entry);
 
 	p->root->pos = 0;
-	//读入root的数据块
-	read_block(p->root->iptr->entry,0,p->root->buf);
+	init_list(&p->root->buf_list);
+	//默认在入目录时全部读入内容
+	uint_32 bcnt = DIV_ROUND_UP(root_dir.iptr->entry->fsize,BLOCK_SIZE);
+	fbuf * fbufs = sys_malloc(bcnt * sizeof(fbuf));
+	int i;
+	for(i = 0;i < bcnt;++i){
+		fbufs->empty = false;
+		fbufs->dirty = false;
+		fbufs->start_pos = i * BLOCK_SIZE;
+		read_block(root_dir.iptr->entry,fbufs->start_pos,fbufs->data);
+		lst_insert_elem(&root_dir.buf_list,&fbufs->tag,fpos_cmp,fbufs->start_pos);
+		fbufs += 1;
+	}
 	sys_free(buf);
+}
+
+static bool reload_dir_buf(list_node * tag,uint_32 arg){
+	fbuf * fb = struct_get(fbuf,tag,tag);
+	read_block(arg,fb->start_pos,fb->data);
+	return false;			
 }
 
 void reload_root(){
 	//读入root的inode
 	reopen_inode(root_dir.iptr,cur_part->sb->root_index);
-	read_block(root_dir.iptr->entry,root_dir.pos,root_dir.buf);
+	
+	dir * d = &root_dir;
+	uint_32 pos = 0,dir_size = d->iptr->entry->fsize;
+	list_node * n;
+	fbuf *fb;
+	uint_32 endpos = DIV_ROUND_UP(dir_size,BLOCK_SIZE) * BLOCK_SIZE;
+	//首先把多余的fbuf释放掉
+	while(true){
+		n = lst_find_elem(&d->buf_list,fpos_cmp,endpos);
+		if(!n) break;
+		else{
+			fb = struct_get(fbuf,tag,n);
+			sys_free(fb);
+			lst_remove(&d->buf_list,n);
+		}
+	}
+	//如果不够创建新的buf
+	fbuf * tail = struct_get(fbuf,tag,d->buf_list.tail);
+#ifdef __DEBUG__
+	ASSERT(d->buf_list.tail);
+#endif
+	while(tail->start_pos + BLOCK_SIZE <= dir_size){
+		fb = sys_malloc(sizeof(fbuf));
+		fb->empty = false;
+		fb->dirty = false;
+		fb->start_pos = tail->start_pos + BLOCK_SIZE;
+		lst_insert_elem(&d->buf_list,&fb->tag,fpos_cmp,fb->start_pos);
+#ifdef __DEBUG__
+		ASSERT(d->buf_list.tail == &fb->tag);
+#endif
+		tail = struct_get(fbuf,tag,d->buf_list.tail);
+	}
+	//重新加载所有的fbuf
+	lst_traverse(&d->buf_list,reload_dir_buf,d->iptr->entry);
 }
 
 bool mount (list_node * tag,uint_32 arg){
@@ -192,18 +262,35 @@ bool mount (list_node * tag,uint_32 arg){
 
 
 /**********************inode和block操作******************/
-
+//传入此参数代表把整个位图都写一次
+#define BM_WALL	-1	
 void bitmap_sycn(uint_32 bit_index,bitmap_type bmt){
-	uint_32 sec_index = bit_index / SECTOR_BIT;
+	uint_32 sec_index;
 	char * buf_addr;
 	switch(bmt){
 		case BM_INODE:{
+			sec_index = bit_index / SECTOR_BIT;
+			if(bit_index == BM_WALL){
+				uint_32 sec_cnt = DIV_ROUND_UP(cur_part->inode_bm->size,SECTOR_BIT);
+				buf_addr = cur_part->inode_bm->map;
+				write_hd(cur_part->mydisk,buf_addr,cur_part->sb->inode_bm_addr,sec_cnt);
+				break;
+			}
 			ASSERT(sec_index < cur_part->sb->inode_bm_sects);
 			buf_addr = (char *)cur_part->inode_bm->map + sec_index * SECTOR_SIZE;
 			write_hd(cur_part->mydisk,buf_addr,cur_part->sb->inode_bm_addr + sec_index,1);
 			break;
 		}
 		case BM_BLOCK:{
+			//注意对于块来说，传入的是块地址，与位图的位下标有偏移
+			if(bit_index == BM_WALL){
+				uint_32 sec_cnt = DIV_ROUND_UP(cur_part->block_bm->size,BLOCK_BIT);
+				buf_addr = cur_part->block_bm->map;
+				write_hd(cur_part->mydisk,buf_addr,cur_part->sb->block_bm_addr,sec_cnt);
+				break;
+			}
+			bit_index -= cur_part->sb->block_start;
+			sec_index = bit_index / SECTOR_BIT;
 			ASSERT(sec_index < cur_part->sb->block_bm_sects);
 			buf_addr = (char *)cur_part->block_bm->map + sec_index * SECTOR_SIZE;
 			write_hd(cur_part->mydisk,buf_addr,cur_part->sb->block_bm_addr + sec_index,1);
@@ -344,11 +431,13 @@ void inode_free(uint_32 index){
 }
 
 int block_alloc(){
-	return bit_alloc(cur_part->block_bm,1);
+	int b =  bit_alloc(cur_part->block_bm,1);
+	if(b == -1) return b;
+	else return cur_part->sb->block_start + b;
 }
 
 void block_free(uint_32 index){
-	bit_reset(cur_part->block_bm,index);
+	bit_reset(cur_part->block_bm,index - cur_part->sb->block_start);
 }
 
 bool add_inode(uint_32 i_no,uint_32 * blocks,uint_32 fsize){
@@ -359,12 +448,17 @@ bool add_inode(uint_32 i_no,uint_32 * blocks,uint_32 fsize){
 	inode_entry * ie = sys_malloc(sizeof(inode_entry));
 	ie->index = i_no;
 	ie->fsize = fsize;
+	//DIV_ROUND_UP的实现中要注意0-1就是全f，会造成错误
 	uint_32 bcnt = DIV_ROUND_UP(fsize,SECTOR_SIZE);	
+	if(!fsize) bcnt = 0;
+	
 	uint_32 i = 0;
 	for(;i < bcnt && i < INODE_PRIMARY_INDEX_CNT;++i){
 		ie->block[i] = blocks[i] + cur_part->sb->block_start;
 	}
 	if(bcnt > INODE_PRIMARY_INDEX_CNT){
+		__F;
+		printk("%d\n",fsize);
 		int blk = block_alloc();
 		uint_32 * buf = sys_malloc(BLOCK_SIZE);
 		memcopy(buf,blocks + INODE_PRIMARY_INDEX_CNT,4 * (bcnt - INODE_PRIMARY_INDEX_CNT));
@@ -392,42 +486,108 @@ static char * parse_path(char * path,char * search_path){
 	return path;
 }
 
-static dir_entry * find_in_dir(char * fname,dir * d){
-	dir_entry * di = d->buf;
+//原本的fname在找到后会变为返回参数指针
+static bool fname_cmp(list_node * tag,uint_32 arg){
+	char * fname = arg;
+	fbuf * fb = struct_get(fbuf,tag,tag);
+	dir_entry * di = fb->data;
 	while(true){
-		if(!strcmp(fname,di->fname)) 
-			return di;
+		if(!strcmp(fname,di->fname)){
+			memcopy(fname,&di,4);
+			uint_32 * pos = fname + 4;
+			*pos = fb->start_pos + ((uint_32)di - (uint_32)fb->data);
+			return true;
+		}
 		else if(!strcmp("",di->fname))
-			return NULL;
+			return false;
 		++di;
 	}
 }
 
-//注意read_dir的用法
+static dir_entry * find_in_dir(char * fname,dir * d,uint_32 * pos){
+	//name_or_ret在传入遍历函数作为fname传入
+	//但是同时也包含返回值，返回时包含两个32位变量
+	//第一个是目录项的指针，第二个是目录项在目录中偏移
+	uint_32 * name_or_ret = sys_malloc(GREATER(8,strlen(fname)));
+	memcopy(name_or_ret,fname,strlen(fname));
+	void * n = lst_traverse(&d->buf_list,fname_cmp,name_or_ret);
+	if(!n) return NULL;
+	else {
+		*pos = name_or_ret[1];
+		return name_or_ret[0];
+	}
+}
+
+//注意load_dir的用法
 //1.目录本身的内存由主调函数提供，但是目录inode内存由本函数提供
 //关闭目录需要注意关闭inode的内存
 //2.buf可被释放，里面的内容已被复制到dir的inode_ptr中
 //3.de是在父目录找到的本目录目录项
-static dir * read_dir(dir_entry *de,dir * d,char * buf){
+static dir * load_dir(dir_entry *de,dir * d,char * buf){
 	//读入并初始化目录的inode
 	d->iptr = sys_malloc(sizeof(inode));
 	open_inode(d->iptr,de->inode_index);
 	
 	d->pos = 0;
-	read_block(d->iptr->entry,0,d->buf);
+	init_list(&d->buf_list);
+	//默认在入目录时全部读入内容
+	uint_32 bcnt = DIV_ROUND_UP(d->iptr->entry->fsize,BLOCK_SIZE);
+	fbuf * fbufs = sys_malloc(bcnt * sizeof(fbuf));
+	int i;
+	for(i = 0;i < bcnt;++i){
+		fbufs->empty = false;
+		fbufs->dirty = false;
+		fbufs->start_pos = i * BLOCK_SIZE;
+		read_block(d->iptr->entry,fbufs->start_pos,fbufs->data);
+		lst_insert_elem(&d->buf_list,&fbufs->tag,fpos_cmp,fbufs->start_pos);
+		fbufs += 1;
+	}
 	return d;
 }
 
-//注意和read_dir不同，这里没有再次申请inode的空间
+//注意和read_dir不同，这里没有再次申请inode和fbuf的空间
 static dir * reload_dir(dir_entry *de,dir * d,char *buf){
 	if(d->iptr->dirty){
-		printk("the file has already changed,are you sure to reload?\n");
+		printk("the file has already changed,are you sure to reload?\n \
+			(You will lost the change if you don't save it before reload)\n ");
 	}
 	
 	printk("%s\n",get_running()->name);
 	reopen_inode(d->iptr,de->inode_index);
 	
-	read_block(d->iptr->entry,d->pos,d->buf);
+	uint_32 pos = 0;
+	uint_32 dir_size = d->iptr->entry->fsize;
+	list_node * n;
+	fbuf *fb;
+	uint_32 endpos = DIV_ROUND_UP(dir_size,BLOCK_SIZE) * BLOCK_SIZE;
+	//首先把多余的fbuf释放掉
+	while(true){
+		n = lst_find_elem(&d->buf_list,fpos_cmp,endpos);
+		if(!n) break;
+		else{
+			fb = struct_get(fbuf,tag,n);
+			sys_free(fb);
+			lst_remove(&d->buf_list,n);
+		}
+	}
+	//如果不够创建新的buf
+	fbuf * tail = struct_get(fbuf,tag,d->buf_list.tail);
+#ifdef __DEBUG__
+	ASSERT(d->buf_list.tail);
+#endif
+	while(tail->start_pos + BLOCK_SIZE <= dir_size){
+		fb = sys_malloc(sizeof(fbuf));
+		fb->empty = false;
+		fb->dirty = false;
+		fb->start_pos = tail->start_pos + BLOCK_SIZE;
+		lst_insert_elem(&d->buf_list,&fb->tag,fpos_cmp,fb->start_pos);
+#ifdef __DEBUG__
+		ASSERT(d->buf_list.tail == &fb->tag);
+#endif
+		tail = struct_get(fbuf,tag,d->buf_list.tail);
+	}
+	//重新加载所有的fbuf
+	lst_traverse(&d->buf_list,reload_dir_buf,d->iptr->entry);
 	return d;
 }
 
@@ -471,7 +631,8 @@ dir_entry* search_file(char * path, search_log * s_log,dir_entry * target){
 		++s_log->depth;
 		
 		path = parse_path(path,sp);
-		de = find_in_dir(sp,parent);
+		uint_32 pos;
+		de = find_in_dir(sp,parent,&pos);
 		//printk("fname : %s\n",sp);
 		if(!de){
 			printk("file not find in directory:%s\n",s_log->search_path);
@@ -482,7 +643,7 @@ dir_entry* search_file(char * path, search_log * s_log,dir_entry * target){
 			case FT_DIRECTORY:{
 				s_log->ft = FT_DIRECTORY;
 				if(*path){
-					parent = read_dir(de,dir_buf,buf);
+					parent = load_dir(de,dir_buf,buf);
 					memcopy(target,de,sizeof(dir_entry));
 				}
 				else	goto end;
@@ -524,7 +685,7 @@ bool open_dir(char* path,dir * d){
 		ASSERT(de == target);
 #endif
 		char * buf = sys_malloc(BLOCK_SIZE);
-		read_dir(de,d,buf);
+		load_dir(de,d,buf);
 		sys_free(buf);
 		sys_free(de);
 		return true;
@@ -557,18 +718,11 @@ bool reopen_dir(char *path,dir * d){
 	}
 }
 
+//目录和文件不同，没有使用回写，而是write through，
+//所以在关闭时很简单
 void close_dir(dir * d){
 	if(d = &root_dir) return;
-	if(!d->iptr->dirty){
-		close_inode(d->iptr);
-		sys_free(d);
-		return;
-	}
-	//对于修改过的目录
-	char * buf = sys_malloc(2*SECTOR_SIZE);
-	write_inode(d->iptr->entry->index,d->iptr->entry,buf);
-	sys_free(buf);
-	write_block(d->iptr,d->pos,&d->buf);
+	sys_free(d);
 	return;		
 }
 
@@ -621,11 +775,46 @@ bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
 	
 }
 
-void print_dir(dir *d){
-	uint_32 dsize = d->iptr->entry->fsize;
-	dir_entry * de = d->buf;
-	int i = 0;
-	for(; i*sizeof(dir_entry) < dsize ;++i){
+bool delete_entry(dir * parent,char * fname){
+	uint_32 pos;
+	uint_32 dir_size = parent->iptr->entry->fsize;
+	dir_entry * de = find_in_dir(fname,parent,&pos);
+	if(!de){
+		printk("%s cannot find\n",fname);
+		return false;
+	}
+	//把后面的目录项向前移动	
+	memcopy(de,(char *)de + sizeof(dir_entry),BLOCK_SIZE - (pos % BLOCK_SIZE) - sizeof(dir_entry) );
+	uint_32 lastde = (BLOCK_SIZE / sizeof(dir_entry) - 1) * sizeof(dir_entry);
+	list_node * n;
+	fbuf * pre,* fb;
+	n = lst_find_elem(&parent->buf_list,fpos_cmp,pos);
+	pre = struct_get(fbuf,tag,n);
+	pre->dirty = true;
+	for(pos = DIV_ROUND_UP(pos,BLOCK_SIZE) * BLOCK_SIZE;pos <= dir_size;pos += BLOCK_SIZE){
+		n = lst_find_elem(&parent->buf_list,fpos_cmp,pos);
+		fb = struct_get(fbuf,tag,n);
+		memcopy(pre->data + lastde,fb->data,sizeof(dir_entry));
+		memcopy(fb->data,fb->data + sizeof(dir_entry),lastde);
+		pre->dirty = true;
+		fb->dirty = true;
+		fb = pre;
+	}
+	//同步所有缓存
+	lst_traverse(&parent->buf_list,fbuf_sycn,parent->iptr->entry);
+	//修改父目录inode
+	parent->iptr->dirty = true;
+	parent->iptr->entry->fsize -= sizeof(dir_entry);
+	return true;	
+}
+
+static bool fbuf_print_de(list_node *tag,uint_32 arg){
+	fbuf *fb = struct_get(fbuf,tag,tag);
+	dir_entry * de = fb->data;
+	int cnt = BLOCK_SIZE/sizeof(dir_entry),i;
+	for(i = 0;i < cnt;++i){
+		if(!strcmp("",de->fname))
+			return true;
 		printk("name:%s,i_no:%d,ftype:",de->fname,de->inode_index);
 		switch(de->ft){
 			case FT_REGULAR:
@@ -636,8 +825,13 @@ void print_dir(dir *d){
 				{printk("unknow type");break;}		
 		}
 		printk("\n");
-		de++;
+		++de;
 	}
+	return false;
+}
+
+void print_dir(dir *d){
+	lst_traverse(&d->buf_list,fbuf_print_de,NULL);
 }
 
 /*********************文件操作*************************/
@@ -649,7 +843,8 @@ bool create_file(dir * p,char * fname,ftype ft,uint_32 fsize){
 		failed_flag = 1;
 		goto rollback;
 	}
-	if(find_in_dir(fname,p)){
+	uint_32 pos;
+	if(find_in_dir(fname,p,&pos)){
 		printk("file already exsit\n");
 		return false;
 	}
@@ -726,6 +921,40 @@ rollback:
 	return false;
 }	
 
+bool delete_file(dir * p,char * fname){
+	uint_32 pos;
+	dir_entry * de = find_in_dir(fname,p,&pos);
+	if(!de){
+		printk("%s doesn't exsit\n",fname);
+		return false;
+	}
+	char * buf = sys_malloc(2 * BLOCK_SIZE);
+	inode_entry * ie = read_inode(de->inode_index,buf);
+	uint_32 * blocks = sys_malloc(4 * MAX_FILE_BCNT);
+	memcopy(blocks,ie->block,4 * INODE_PRIMARY_INDEX_CNT);
+	if(blocks[INODE_PRIMARY_INDEX_CNT]){
+		read_hd(cur_part->mydisk,blocks + INODE_PRIMARY_INDEX_CNT,blocks[INODE_PRIMARY_INDEX_CNT],1);
+	}
+	
+	//释放块
+	int i;
+	for(i = 0;i <= MAX_FILE_BCNT;++i){
+		if(!blocks[i]) break;
+		else block_free(blocks[i]);
+	}
+	bitmap_sycn(BM_WALL,BM_BLOCK);
+
+	//块不需要再次全部写0，只要修改文件即可，但inode不行
+	inode_free(ie->index);
+	bitmap_sycn(ie->index,BM_INODE);
+	memset_8(buf,sizeof(inode_entry),0);
+	inode_entry * ie0 = buf;
+	add_inode(ie->index,ie0->block,ie0->fsize);
+
+	//删除目录项
+	delete_entry(p,fname);
+}
+
 //把目录项指向的文件安装到文件file_table中
 static int load_file(dir_entry * de,open_flag of){
 	if(file_cnt >= MAX_OPEN_FILE_CNT){
@@ -745,14 +974,6 @@ static int load_file(dir_entry * de,open_flag of){
 	return file_cnt++;
 }
 
-//比较器用于判断fbuf中是否含有fpos所指向的内容
-static bool fpos_cmp(list_node *tag,size_t fpos){
-	fbuf * fb = struct_get(fbuf,tag,tag);
-	int_32 diff = fpos - fb->start_pos;
-	if(diff >= 0 && diff < BLOCK_SIZE)
-		return true;
-	else return false;
-} 
 
 //此函数和seek不同，seek是操作单个进程的文件表
 //此函数直接操作内核中所有文件的打开文件表
@@ -827,14 +1048,15 @@ int open_file(char * path,open_flag of){
 		case FT_REGULAR:{
 			fd = find_in_ftable(target);	
 			if(fd != -1){
+				__F;
 				++file_table[fd].iptr->open_cnt;
 			}
 			else fd = load_file(target,of);
 
 			if(fd == -1) return fd;
 			else{
-				proc * curp = get_running();
-				lst_push(&file_table[fd].iptr->proc_list,curp);
+				++file_table[fd].iptr->open_cnt;
+				//在inode链表中加入proc的工作在打开inode时进行
 			}
 			read_file_to_block(fd);
 			
@@ -860,17 +1082,6 @@ int open_file(char * path,open_flag of){
 	proc * p = get_running()->proc;
 	fd = install_file(p,fd);
 	return fd;
-}
-
-static bool fbuf_sycn(list_node * tag,inode * i){
-	fbuf * fb = struct_get(fbuf,tag,tag);
-	if(!fb->dirty) return false;
-	write_block(i,fb->start_pos,fb->data);
-	return false;
-}
-
-static void fbuf_free(list_node * tag){
-	sys_free(struct_get(fbuf,tag,tag));
 }
 
 bool close_file(int fd){
@@ -921,8 +1132,9 @@ bool close_file(int fd){
 	}
 	lst_remove(&in->proc_list,&p->general_tag);
 	uninstall_file(p,fd);
-	if(lst_empty(&in->proc_list))
+	if(lst_empty(&in->proc_list)){
 		close_inode(in);
+	}
 	sys_free(f->fname);
 	sys_free(f);
 }
@@ -969,7 +1181,6 @@ bool read_file(int fd,char * dst,size_t size){
 #ifdef __DEBUG__
 	ASSERT(src <= end);
 #endif
-	
 	while(true){
 		if(down >= size)
 			return true;
@@ -1003,7 +1214,6 @@ bool write_file (int fd,char * src,size_t size){
 	}
 	uint_32 end;
 	char * dst = seek(fd,&end,pos); 
-	printk("dst : 0x%x\n",dst);
 	//如果dst返回NULL，说明要写的位置实际超出了当前文件大小
 	//那么就把从文件末尾到要写的位置的末尾的所有块一次在内存中分配完成
 	//这里并不会进行磁盘块的分配，只是写到缓存区而已
@@ -1036,6 +1246,7 @@ bool write_file (int fd,char * src,size_t size){
 				fb->dirty = true;
 				fb->start_pos = pos;
 				dst = fb->data;
+				lst_insert_elem(&f->buf_list,&fb->tag,fpos_cmp,pos);
 			}
 		}
 		

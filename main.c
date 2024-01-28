@@ -46,11 +46,26 @@ int main(void){
 	int fd = open_file("/test",O_WR);
 	if(fd != -1)
 		printk("open file success\n");
-	char * rbuf = sys_malloc(BLOCK_SIZE);
+
+	char * buf = sys_malloc(BLOCK_SIZE);
+	buf = "test has been wirtten\n";
 	set_fpos(fd,0);
-	read_file(fd,rbuf,BLOCK_SIZE);
-	printk("%s",rbuf);
+	write_file(fd,buf,BLOCK_SIZE);
 	close_file(fd);
+	
+	memset_8(buf,BLOCK_SIZE,0);
+	fd = open_file("/test",O_WR);
+	if(fd != -1)
+		printk("open file success\n");
+	set_fpos(fd,0);
+	read_file(fd,buf,BLOCK_SIZE);
+	printk("%s",buf);
+	close_file(fd);
+	
+	delete_file(&root_dir,"test");
+	reopen_dir("/",&root_dir);
+	print_dir(&root_dir);
+	
 	return 0;
 }
 

@@ -59,7 +59,7 @@ typedef struct dir_entry{
 typedef struct dir{ 
 	inode * iptr;
 	uint_32 pos;	//目录游标
-	uint_8 buf[512];	
+	list buf_list;
 }dir;
 
 //记录当前根目录
@@ -149,7 +149,7 @@ dir_entry * search_file(char *path,search_log * s_log,dir_entry * target);
 bool open_dir(char * path,dir * d);
 void close_dir(dir * d);
 bool reopen_dir(char * path,dir *d);
-bool add_entry(dir * parent,char* fname,uint_32 i_no,ftype ft);
+bool create_dir(char * path);
 void print_dir(dir *d);
 #define MAX_FILE_BCNT 140
 #define INODE_PRIMARY_INDEX_CNT 12
@@ -159,6 +159,7 @@ int file_cnt;	//已经打开的文件数量
 file file_table[MAX_OPEN_FILE_CNT];
 mutex flloc_lock;
 bool create_file(dir * p,char *fname,ftype ft,uint_32 fsize);
+bool delete_file(dir * p,char * fname);
 //打开文件，返回file_table下标,-1代表失败
 int open_file(char * path,open_flag f);
 bool read_file(int fd,char * dst,size_t size);
