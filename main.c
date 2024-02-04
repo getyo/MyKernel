@@ -38,21 +38,22 @@ int main(void){
 	printk("fsys init done\n");
 	lst_traverse(&part_lst,mount,"sdb0");
 	printk("sdb0 has mounted\n");
+	printk("root sector:%d\n",cur_part->sb->block_start -1);
 	//proc_start("name",10,print,a);
-	if(create_file(&root_dir,"test",FT_REGULAR,100))
-		printk("create_file success\n");
 	reopen_dir("/",&root_dir);
-	print_dir(&root_dir);
+
+	char * buf = sys_malloc(BLOCK_SIZE);
+	int fd;
+/*
 	int fd = open_file("/test",O_WR);
 	if(fd != -1)
 		printk("open file success\n");
 
-	char * buf = sys_malloc(BLOCK_SIZE);
 	buf = "test has been wirtten\n";
 	set_fpos(fd,0);
 	write_file(fd,buf,BLOCK_SIZE);
 	close_file(fd);
-	
+
 	memset_8(buf,BLOCK_SIZE,0);
 	fd = open_file("/test",O_WR);
 	if(fd != -1)
@@ -61,11 +62,41 @@ int main(void){
 	read_file(fd,buf,BLOCK_SIZE);
 	printk("%s",buf);
 	close_file(fd);
-	
-	delete_file(&root_dir,"test");
-	reopen_dir("/",&root_dir);
+*/	
+
+	if(!create_file(&root_dir,"test_dir",FT_DIRECTORY,BLOCK_SIZE)){
+		printk("create directory flied : test_dir\n");	
+	}
+	reload_root();
 	print_dir(&root_dir);
-	
+
+	dir * d = sys_malloc(sizeof(dir));
+	if(!open_dir("/test_dir/",d)){
+		printk("open dir filed\n");
+	}	
+	if(!create_file(d,"t0",FT_REGULAR,BLOCK_SIZE)){
+		printk("create file flied : t0\n");	
+	}
+	fd = open_file("/test_dir/t0",O_WR);
+	if(fd != -1)
+		printk("open file success\n");
+	set_fpos(fd,0);
+	buf = "t0 has been written\n";
+	write_file(fd,buf,BLOCK_SIZE);
+	close_file(fd);
+
+	fd = open_file("/test_dir/t0",O_WR);
+	if(fd != -1)
+		printk("open file success\n");
+	set_fpos(fd,0);
+	read_file(fd,buf,BLOCK_SIZE);
+	printk("%s",buf);
+
+	if(!create_file(&root_dir,"test_file",FT_REGULAR,BLOCK_SIZE)){
+		printk("create file test_file filed\n");
+	}
+	reload_root();
+	print_dir(&root_dir);
 	return 0;
 }
 

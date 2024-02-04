@@ -9,6 +9,7 @@ void cv_set_arg(condition_var * cv,void * arg){
 	cv->fun_arg = arg;
 }
 
+//条件满足时阻塞
 void conditional_block(condition_var * cv){
 	bool staisfy = cv->fun(cv->fun_arg);
 	if(!staisfy) return;
@@ -30,3 +31,11 @@ void conditional_notify(condition_var * cv){
 	}
 	set_int_status(new_status);
 }
+
+void * actomic_action(void * fun(void *),void * arg){
+	enum int_status old_status = int_disable();
+	void * ret = fun(arg);
+ 	set_int_status(old_status);
+	return ret;
+}
+

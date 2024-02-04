@@ -15,5 +15,6 @@ void cv_set_arg(condition_var * cv,void * fun_arg);
 void conditional_block(condition_var * cv);
 //从阻塞队列中拿出一个线程执行
 void conditional_notify(condition_var * cv);
+void * actomic_action(void * fun(void * arg),void * arg);
 #endif
 

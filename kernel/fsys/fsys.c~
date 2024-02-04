@@ -160,16 +160,16 @@ void load_root(partition * p){
 	p->root->iptr = sys_malloc(sizeof(inode));
 	//初始化锁	
 	root_dir.iptr->write_lock = sys_malloc(sizeof(mutex));
-	mutex * wlock = root_dir.iptr->write_lock;
-	init_mutex(root_dir.iptr->write_lock);
+	muetx * wlock = root_dir.iptr->write_lock;
+	init_mutex(root_dir->iptr->write_lock);
 
 	//由于第一次初始化文件，默认此时是没有读文件操作的
 	//如果有了要考虑文件系统的稳定性问题了
 	lock(wlock);
 	root_dir.iptr->is_writing = true;
 	
-	init_inode(p->root->iptr,0,root_entry);
-	lst_head_insert(&inode_list,&root_dir.iptr->tag);	
+	init_inode(p->root->iptr,1,root_entry);
+	lst_head_insert(&inode_list,&root_dir->iptr->tag);	
 	++inode_cnt;
 
 	p->root->pos = 0;
@@ -183,7 +183,7 @@ void load_root(partition * p){
 		fbufs->dirty = false;
 		fbufs->start_pos = i * BLOCK_SIZE;
 		read_block(root_dir.iptr->entry,fbufs->start_pos,fbufs->data);
-		lst_insert_elem(&root_dir.iptr->buf_list,&fbufs->tag,fpos_cmp,fbufs->start_pos);
+		lst_insert_elem(&root_dir.buf_list,&fbufs->tag,fpos_cmp,fbufs->start_pos);
 		fbufs += 1;
 	}
 
@@ -213,10 +213,10 @@ void * read_set(inode * i){
 }
 
 void reload_root(){
-	mutex * wlock = root_dir.iptr->write_lock;
+	muetx * wlock = root_dir.iptr->write_lock;
 
 	lock(wlock);
-	actomic_action(write_set,root_dir.iptr);
+	atomic_action(write_set,d->iptr);
 	//读入root的inode
 	reopen_inode(root_dir.iptr,cur_part->sb->root_index);	
 
@@ -257,7 +257,7 @@ void reload_root(){
 
 	d->iptr->is_writing = false;
 	unlock(wlock);
-	conditional_notify(d->iptr->write_cv);
+	condition_notify(d->iptr->write_cv);
 }
 
 bool mount (list_node * tag,uint_32 arg){
@@ -427,12 +427,15 @@ char* write_block(inode_entry *in,uint_32 fpos,char *buf){
 void open_inode(inode * i,uint_32 index){
 	char * buf = sys_malloc(SECTOR_SIZE * 2);
 	inode_entry * entry = read_inode(index,buf);
+
 	i->write_lock = sys_malloc(sizeof(mutex));
 	init_mutex(i->write_lock);
-
+	
 	lock(i->write_lock);
-	init_inode(i,0,entry);
+
+	init_inode(i,1,entry);
 	lst_head_insert(&inode_list,&i->tag);
+
 	unlock(i->write_lock);
 
 	sys_free(buf);
@@ -493,7 +496,7 @@ void close_inode(inode * in){
 		write_inode(in->entry->index,in->entry,buf);
 		sys_free(buf);
 	}
-	lst_remove(&inode_list,&in->tag);
+	lst_remove(&inode_table,&in->tag);
 	sys_free(in->entry);
 	sys_free(in->read_cv);
 	sys_free(in->write_cv);
@@ -624,11 +627,14 @@ static dir_entry * find_in_dir(char * fname,dir * d,uint_32 * pos){
 static dir * load_dir(dir_entry *de,dir * d,char * buf){
 	//读入并初始化目录的inode
 	d->iptr = sys_malloc(sizeof(inode));
+	lock(d->iptr->write_lock);	
 	d->iptr->is_writing = true;
 	open_inode(d->iptr,de->inode_index);
+	
 	d->pos = 0;
 	init_list(&d->iptr->buf_list);
 	//默认在入目录时全部读入内容
+
 	uint_32 bcnt = DIV_ROUND_UP(d->iptr->entry->fsize,BLOCK_SIZE);
 	fbuf * fbufs = sys_malloc(bcnt * sizeof(fbuf));
 	int i;
@@ -640,7 +646,9 @@ static dir * load_dir(dir_entry *de,dir * d,char * buf){
 		lst_insert_elem(&d->iptr->buf_list,&fbufs->tag,fpos_cmp,fbufs->start_pos);
 		fbufs += 1;
 	}
+	
 	d->iptr->is_writing = false;
+	unlock(d->iptr->write_lock);
 	conditional_notify(d->iptr->write_cv);
 	return d;
 }
@@ -653,7 +661,7 @@ static dir * reload_dir(dir_entry *de,dir * d,char *buf){
 	}
 	
 	lock(d->iptr->write_lock);
-	actomic_action(d->iptr->write_cv,d->iptr);
+	actomic_action(write_cv,d->iptr);
 	reopen_inode(d->iptr,de->inode_index);
 	
 	uint_32 pos = 0;
@@ -735,12 +743,10 @@ dir_entry* search_file(char * path, search_log * s_log,dir_entry * target){
 	while(true){
 		//printk("sp:%s\n",sp);
 		strcat(sp,sp,"/");
-		sp += strlen(sp);
-		--sp;
+		++sp;
 		++s_log->depth;
 		
 		path = parse_path(path,sp);
-		printk("sp:%s,path:%s\n",sp,path);
 		uint_32 pos;
 		de = find_in_dir(sp,parent,&pos);
 		//printk("fname : %s\n",sp);
@@ -777,20 +783,12 @@ end:
 }
 
 bool open_dir(char* path,dir * d){
-	uint_32 pathlen = strlen(path);
-	if(path[pathlen-2] != '/'){
-		printk("%s is not a directory\n",path);
-		return false;
-	}	
-
 	search_log *s_log = sys_malloc(sizeof(search_log));
 	dir_entry * de = sys_malloc(sizeof(dir_entry));
 	dir_entry * target = search_file(path,s_log,de);
 	sys_free(s_log);
 	if(target == ROOT_ENTRY){
 		*d = root_dir;
-		d->path = sys_malloc(MAX_FNAME_LENGTH);
-		memcopy(d->path,path,strlen(path));
 		sys_free(de);
 		return true;
 	}
@@ -804,8 +802,6 @@ bool open_dir(char* path,dir * d){
 #endif
 		char * buf = sys_malloc(BLOCK_SIZE);
 		load_dir(de,d,buf);
-		d->path = sys_malloc(pathlen);
-		memcopy(d->path,path,pathlen);
 		sys_free(buf);
 		sys_free(de);
 		return true;
@@ -843,7 +839,6 @@ bool reopen_dir(char *path,dir * d){
 void close_dir(dir * d){
 	if(d = &root_dir) return;
 	lst_free_elem(&d->iptr->buf_list,fbuf_free);
-	sys_free(d->path);
 	sys_free(d);
 	return;		
 }
@@ -910,7 +905,7 @@ bool delete_entry(dir * parent,char * fname){
 #ifdef __DBEUG__
 	ASSERT(!parent->is_writing);
 #endif
-	actomic_action(write_set,parent->iptr);
+	atomic_action(write_set,parent->iptr);
 	//把后面的目录项向前移动	
 	memcopy(de,(char *)de + sizeof(dir_entry),BLOCK_SIZE - (pos % BLOCK_SIZE) - sizeof(dir_entry) );
 	uint_32 lastde = (BLOCK_SIZE / sizeof(dir_entry) - 1) * sizeof(dir_entry);
@@ -934,16 +929,14 @@ bool delete_entry(dir * parent,char * fname){
 	//修改父目录inode
 	parent->iptr->dirty = true;
 	parent->iptr->entry->fsize -= sizeof(dir_entry);
-	char *buf = sys_malloc(SECTOR_SIZE * 2);
-	write_inode(parent->iptr->entry->index,parent->iptr->entry,buf);
-	sys_free(buf);
-	parent->iptr->is_writing = false;
-	unlock(parent->iptr->write_lock);
-	conditional_notify(parent->iptr->read_cv);
+
+	parent->is_writing = false;
+	unlock(write_lock);
+	conditional_notify(read_cv);
 	return true;	
 }
 
-bool delete_dir(char * path,dir_rmarg rmarg){
+bool delete_file(char * path,dir_rmarg rmarg){
 	if(path[strlen(path)-1] != '/'){
 		printk("%s isn't directory\n",path);
 		return false;
@@ -961,12 +954,9 @@ bool delete_dir(char * path,dir_rmarg rmarg){
 	}
 
 	uint_32 pos;
-	
-	dir_entry * de = sys_malloc(sizeof(dir_entry));
-	search_log * slog = sys_malloc(sizeof(search_log));
-	dir_entry * target = search_file(path,slog,de);
-	if(!target){
-		printk("%s doesn't exsit\n",path);
+	dir_entry * de = find_in_dir(fname,p,&pos);
+	if(!de){
+		printk("%s doesn't exsit\n",fname);
 		return false;
 	}
 	char * buf = sys_malloc(2 * BLOCK_SIZE);
@@ -993,7 +983,8 @@ bool delete_dir(char * path,dir_rmarg rmarg){
 	add_inode(ie->index,ie0->block,ie0->fsize);
 
 	//删除目录项
-	delete_entry(p,de->fname);
+	delete_entry(p,fname);
+}
 }
 
 static bool fbuf_print_de(list_node *tag,uint_32 arg){
@@ -1058,7 +1049,6 @@ bool create_file(dir * p,char * fname,ftype ft,uint_32 fsize){
 		goto rollback;
 	}
 	bitmap_sycn(i_no,BM_INODE);
-
 	//根据文件大小分配对应的块，最少为1块
 	uint_32 bcnt = DIV_ROUND_UP(fsize,SECTOR_SIZE);
 	if(bcnt > MAX_FILE_BCNT) {
@@ -1130,7 +1120,7 @@ bool delete_file(dir * p,char * fname){
 		printk("%s doesn't exsit\n",fname);
 		return false;
 	}
-	if(lst_find_elem(&inode_list,find_inode,de->inode_index)){
+	if(lst_find_elem(&inode_table,find_inode,de->inode_index)){
 		printk("%s is using by other process\n",fname);
 		return false;
 	}
@@ -1163,7 +1153,7 @@ bool delete_file(dir * p,char * fname){
 
 //把目录项指向的inode载入并返回其指针
 static inode* load_file(dir_entry * de,open_flag of){
-	if(inode_cnt >= MAX_OPEN_INODE_CNT){
+	if(inode_cnt >= MAX_OPEN_FILE_CNT){
 		printk("the number of file be opened has reach the limit\n");
 		return -1;
 	}
@@ -1185,7 +1175,7 @@ static void* read_file_to_block(inode * in,char * fname,uint_32 fpos){
 	list_node * tag = lst_find_elem(&in->buf_list,fpos_cmp,fpos);
 	fbuf * fb;
 	lock(in->write_lock);
-	actomic_action(write_set,in);
+	atomic_action(write_set,in);
 	if(!tag){
 		fb = sys_malloc(sizeof(fbuf));
 		fb->start_pos = fpos & BLOCK_SIZE; 
@@ -1197,10 +1187,10 @@ static void* read_file_to_block(inode * in,char * fname,uint_32 fpos){
 		}
 		read_block(in->entry,fpos,fb->data);
 	}
-	else	fb = struct_get(fbuf,tag,tag);
 	in->is_writing = false;
 	unlock(in->write_lock);
 	conditional_notify(in->write_cv);
+	else	fb = struct_get(fbuf,tag,tag);
 	return fb->data + (fpos & ~BLOCK_SIZE);
 }
 
@@ -1218,12 +1208,6 @@ int open_file(char * path,open_flag of){
 		return fd;
 	}
 	
-	proc * p = get_running()->proc;
-	fd = has_file(p,path);
-	if(fd != -1){
-		printk("File %s has already been opened by process %s\n",path,p->name);
-		return -1;
-	}
 	search_log * slog = sys_malloc(sizeof(search_log));
 	dir_entry * de = sys_malloc(sizeof(dir_entry));
 	dir_entry * target = search_file(path,slog,de);
@@ -1290,7 +1274,8 @@ int open_file(char * path,open_flag of){
 		default : break;
 	}	
 	unlock(&flloc_lock);
-	fd = install_file(p,in,de->fname,path,0,of);
+	proc * p = get_running()->proc;
+	fd = install_file(p,in,de->fname,0,of);
 	return fd;
 }
 
@@ -1341,6 +1326,8 @@ bool close_file(int fd){
 	if(lst_empty(&in->proc_list)){
 		close_inode(in);
 	}
+	sys_free(f->fname);
+	sys_free(f);
 }
 
 int sys_open(char * path,open_flag of){
@@ -1386,10 +1373,10 @@ bool read_file(int fd,char * dst,size_t size){
 #ifdef __DEBUG__
 	ASSERT(src <= end);
 #endif
-	actomic_action(read_set,f->iptr);
+	atomic_action(read_set,f->iptr);
 	while(true){
 		if(down >= size){
-			finish_reading(f->iptr);
+			finish_read(f->iptr);
 			return true;
 		}
 		if(src >= end){
@@ -1421,13 +1408,13 @@ bool write_file (int fd,char * src,size_t size){
 		f->fsize = f->fpos + size;
 	}
 	uint_32 end;
-	fbuf * fb;
-	lock(f->iptr->write_lock);
-	actomic_action(write_set,f->iptr);
 	char * dst = seek(fd,&end,pos); 
 	//如果dst返回NULL，说明要写的位置实际超出了当前文件大小
 	//那么就把从文件末尾到要写的位置的末尾的所有块一次在内存中分配完成
 	//这里并不会进行磁盘块的分配，只是写到缓存区而已
+	fbuf * fb;
+	lock(f->iptr->write_lock);
+	actomic_action(write_set,f->iptr);
 	if(!dst){
 		int bcnt = DIV_ROUND_UP(size,BLOCK_SIZE);
 		int i;
@@ -1439,7 +1426,6 @@ bool write_file (int fd,char * src,size_t size){
 			lst_insert_elem(&f->iptr->buf_list,&fb->tag,fpos_cmp,pos + i*BLOCK_SIZE);
 		}
 	}
-	printk("dst : 0x%x\n",dst);
 	size_t down = 0,opbytes = 0;
 #ifdef __DEBUG__
 	ASSERT(dst <= end);

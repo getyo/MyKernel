@@ -165,18 +165,45 @@ static void free_fd(proc * p,int fd){
 	unlock(p->file_lock);
 }
 
-//输入参数是全局file_table的数组下标，返回数据是本进程的文件描述符
-int install_file(proc * p,int fd){
-	int pfd = get_fd(p);
-	if(pfd == -1){
-		printk("%s canont open more files\n",p->name);
-		return pfd;
+int has_file(proc * p,char * path){
+	int i;
+	file * f;
+	for(i = 0;i < MAX_OPEN_FILE_PER_PROC;++i){
+		f = p->fd[i];
+		if(f == -1) continue;
+		if(!strcmp(path,f->path))
+			return i;
 	}
-	p->fd[pfd] = sys_malloc(sizeof(file));
-	memcopy(p->fd[pfd],&file_table[fd],sizeof(file));
-	return pfd;	
+	return -1;
+}
+
+//输入参数是全局file_table的数组下标，返回数据是本进程的文件描述符
+int install_file(proc * p,void * iptr,char * fname,char * path,uint_32 fpos,uint_8 of){
+	inode * in = iptr;
+	int fd = get_fd(p);
+	if(fd == -1){
+		printk("%s canont open more files\n",p->name);
+		return fd;
+	}
+	p->fd[fd] = sys_malloc(sizeof(file));
+	file * f = p->fd[fd];
+	
+	f->fname = sys_malloc(MAX_FNAME_LENGTH);
+	memcopy(f->fname,fname,MAX_FNAME_LENGTH);
+	f->path = sys_malloc(strlen(path));
+	memcopy(f->path,path,strlen(path));
+	f->fpos = fpos;
+ 	f->of = of;
+	f->fsize = in->entry->fsize;
+	f->iptr = in;
+	f->dirty = false;
+	return fd;	
 }
 
 void uninstall_file(proc * p,int fd){
+	file * f = p->fd[fd];
 	free_fd(p,fd);	
+	sys_free(f->fname);
+	sys_free(f->path);
+	sys_free(f);
 }

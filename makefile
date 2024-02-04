@@ -4,7 +4,7 @@ U = user/
 CC = gcc
 AS = nasm
 ASFLAGS = -f elf
-CFLAGS = -m32 -I $Kinclude/ -I $Uinclude/ -nostdinc
+CFLAGS = -m32 -I $Kinclude/ -I $Uinclude/ -nostdinc -w
 LDFLAGS = -e main -Ttext 0xc0001500 -m elf_i386
 objects = $Omain.o $Oinit_int.o $Okernel.o $Oput_char.o $Oput_str.o $Ointerrupt.o $Odebug.o $Ostring.o \
           $Obitmap.o $Osmalloc.o $Opool.o $Othread.o $Olist.o $Oswitch.o $Osemaphore.o $Oconsole.o \
