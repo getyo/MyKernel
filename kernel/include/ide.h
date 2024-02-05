@@ -14,6 +14,7 @@ typedef struct partition_entry partition_entry;
 typedef struct boot_sector boot_sector;
 typedef struct super_block super_block;
 typedef struct dir dir;
+typedef struct kdir kdir;
 
 //定义分区
 typedef struct partition{
@@ -26,7 +27,7 @@ typedef struct partition{
 	bitmap * block_bm;	//扇区位图
 	bitmap * inode_bm;	
 	super_block * sb;
-	dir * root;
+	kdir * root;
 }partiton;
 
 //定义磁盘

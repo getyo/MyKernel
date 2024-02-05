@@ -73,7 +73,8 @@ int main(void){
 	dir * d = sys_malloc(sizeof(dir));
 	if(!open_dir("/test_dir/",d)){
 		printk("open dir filed\n");
-	}	
+	}
+	
 	if(!create_file(d,"t0",FT_REGULAR,BLOCK_SIZE)){
 		printk("create file flied : t0\n");	
 	}
@@ -97,6 +98,9 @@ int main(void){
 	}
 	reload_root();
 	print_dir(&root_dir);
+	
+	sys_cd("/test_dir/");
+	print_dir(get_running()->workdir);
 	return 0;
 }
 
@@ -104,3 +108,5 @@ void print(uint_32 n){
 	uint_32 p = malloc(2);
 	printf("the memory is %x",p);
 }
+
+

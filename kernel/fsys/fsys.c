@@ -150,30 +150,46 @@ void fsys_init(){
 	init_mutex(p->file_lock);	
 }
 
+static bool push_inode(inode * i){
+	if(inode_cnt >= MAX_OPEN_INODE_CNT){
+		printk("Total of opened files had reach the cat\n");
+		return false;
+	}
+	lock(&flloc_lock);
+	lst_push(&inode_list,&i->tag);
+	++inode_cnt;
+	unlock(&flloc_lock);
+	return true;
+}
+
+static void pop_inode(inode * i){
+	if(inode_cnt <= 0){
+		printk("There is no file has been opened\n");
+		return;
+	}
+	lock(&flloc_lock);
+	lst_remove(&inode_list,&i->tag);
+	--inode_cnt;
+	unlock(&flloc_lock);
+}
+
 void load_root(partition * p){
 	cur_part = p;
 	p->root = &root_dir;
 	//读入root的inode
 	char * buf = sys_malloc(SECTOR_SIZE * 2);
-
+	root_dir.path = sys_malloc(4);
+	root_dir.path = "/";
 	inode_entry * root_entry = read_inode(p->sb->root_index,buf);
 	p->root->iptr = sys_malloc(sizeof(inode));
-	//初始化锁	
-	root_dir.iptr->write_lock = sys_malloc(sizeof(mutex));
-	mutex * wlock = root_dir.iptr->write_lock;
-	init_mutex(root_dir.iptr->write_lock);
-
 	//由于第一次初始化文件，默认此时是没有读文件操作的
 	//如果有了要考虑文件系统的稳定性问题了
-	lock(wlock);
-	root_dir.iptr->is_writing = true;
-	
 	init_inode(p->root->iptr,0,root_entry);
-	lst_head_insert(&inode_list,&root_dir.iptr->tag);	
-	++inode_cnt;
+	push_inode(root_dir.iptr);
 
 	p->root->pos = 0;
 	init_list(&p->root->iptr->buf_list);
+	init_list(&p->root->sonlist);
 	//默认在入目录时全部读入内容
 	uint_32 bcnt = DIV_ROUND_UP(root_dir.iptr->entry->fsize,BLOCK_SIZE);
 	fbuf * fbufs = sys_malloc(bcnt * sizeof(fbuf));
@@ -188,8 +204,6 @@ void load_root(partition * p){
 	}
 
 	root_dir.iptr->is_writing = false;
-	unlock(wlock);
-	conditional_notify(root_dir.iptr->write_cv);
 
 	sys_free(buf);
 }
@@ -220,7 +234,7 @@ void reload_root(){
 	//读入root的inode
 	reopen_inode(root_dir.iptr,cur_part->sb->root_index);	
 
-	dir * d = &root_dir;
+	kdir* d = &root_dir;
 	uint_32 pos = 0,dir_size = d->iptr->entry->fsize;
 	list_node * n;
 	fbuf *fb;
@@ -308,6 +322,21 @@ bool find_inode(list_node * tag,uint_32 i_no){
 		return true;
 	else return false;
 }
+
+static void ipushp(inode * i,proc *p){
+	lock(i->write_lock);
+	lwm_push(&i->proc_list,p);
+	++i->open_cnt;
+	unlock(i->write_lock);
+}
+
+static void irmp(inode *i,proc * p){
+	lock(i->write_lock);
+	lwm_remove(&i->proc_list,p);
+	--i->open_cnt;
+	unlock(i->write_lock);
+}
+
 //传入此参数代表把整个位图都写一次
 #define BM_WALL	-1	
 void bitmap_sycn(uint_32 bit_index,bitmap_type bmt){
@@ -418,25 +447,36 @@ char* write_block(inode_entry *in,uint_32 fpos,char *buf){
 	return fpos;
 }
 
+//如果inode已经存在，打开数+1，返回inode
+//否则读入inode
+//此函数提供inode内存，主调函数并不关心该内存释放
 //注意对所有inode内容映像的修改中，虽然会上锁
 //但是并不会唤醒读线程，因为很多时候修改完inode紧接着就是修改文件缓存，
 //如果在修改完inode就唤醒读线程，会造成inode映像和文件缓存内容的不一致性
 //所以把唤醒读线程的权力留给了主调函数，但是这同时也意味着如果主调函数不清楚这一点
 //读线程可能永远阻塞
 //在进入此函数之前，is_writing应该被设置为true，离开后做完所以文件改动，才被设置为false
-void open_inode(inode * i,uint_32 index){
+inode * open_inode(uint_32 index){
+	inode * i = lst_find_elem(&inode_list,find_inode,index);
+	if(i){	
+		lock(i->write_lock);
+		++i->open_cnt;
+		lwm_push(&i->proc_list,get_running()->proc);
+		unlock(i->write_lock);
+		return i;
+	}
+	i = sys_malloc(sizeof(inode));
 	char * buf = sys_malloc(SECTOR_SIZE * 2);
 	inode_entry * entry = read_inode(index,buf);
 	i->write_lock = sys_malloc(sizeof(mutex));
 	init_mutex(i->write_lock);
-
 	lock(i->write_lock);
 	init_inode(i,0,entry);
-	lst_head_insert(&inode_list,&i->tag);
+	push_inode(i);
 	unlock(i->write_lock);
 
 	sys_free(buf);
-	return;
+	return	i;
 }
 
 void reopen_inode(inode * i,uint_32 index){
@@ -467,11 +507,12 @@ static bool can_be_written(inode * iptr){
 //本函数提供inode结构中entry，write_cv的内存分配，需要注意在关闭文件时释放
 void init_inode(inode * i,uint_32 open_cnt,inode_entry * entry){
 	i->open_cnt = open_cnt;
-	//由于改变inode内容本身是要使用这个锁的，所以初始化只能在这之前
-	//init_mutex(i->write_lock);
+	
+	i->write_lock = sys_malloc(sizeof(mutex));
+	init_mutex(i->write_lock);
 	i->dirty = false;
-	//本操作本身就是在写文件，所以不能在这里初始化
-	//i->is_writing = false;
+	
+	i->is_writing = false;
 	i->is_reading = 0;
 	i->write_cv  = sys_malloc(sizeof(condition_var));
 	init_condition_var(i->write_cv,can_be_read,i);
@@ -483,8 +524,8 @@ void init_inode(inode * i,uint_32 open_cnt,inode_entry * entry){
 	i->entry = sys_malloc(sizeof(inode_entry));
 	memcopy(i->entry,entry,sizeof(inode_entry));
 	init_list(&i->proc_list);
-	proc * p = (proc *)get_running()->proc;
-	lst_push(&i->proc_list,&p->general_tag);	
+	ipushp(i,get_running()->proc);
+	init_list(&i->buf_list);
 }
 
 void close_inode(inode * in){
@@ -493,11 +534,19 @@ void close_inode(inode * in){
 		write_inode(in->entry->index,in->entry,buf);
 		sys_free(buf);
 	}
-	lst_remove(&inode_list,&in->tag);
-	sys_free(in->entry);
-	sys_free(in->read_cv);
-	sys_free(in->write_cv);
-	sys_free(in->write_lock);
+
+	if(in->open_cnt <= 0){
+		pop_inode(in);
+		sys_free(in->entry);
+		sys_free(in->read_cv);
+		sys_free(in->write_cv);
+		sys_free(in->write_lock);
+		lwm_free(&in->proc_list);
+		sys_free(in);
+	}
+	else{
+		irmp(in,get_running()->proc);
+	}
 	return;	
 }
 
@@ -562,7 +611,9 @@ static char * parse_path(char * path,char * search_path){
 	while(*path != '/' && *path != '\0') {
 		*search_path++ =  *path++;
 	}
-	if(*path == '/') ++path;
+	if(*path == '/'){
+		*search_path++ = *path++;
+	}
 	return path;
 }
 
@@ -570,7 +621,7 @@ static char * parse_path(char * path,char * search_path){
 //如果是绝对路径，则一定存在父目录，根目录的父目录是本身
 //如果是相对路径，不存在父目录时返回NULL
 static char * get_parent_path(char * path,char * p){
-	char * backit = path + strlen(path) - 1,* headend = path;
+	char * backit = path + strlen(path) - 2,* headend = path;
 	if(*backit == '/') --backit;
 	while(backit >= headend){
 		if(*backit == '/') break;
@@ -579,6 +630,7 @@ static char * get_parent_path(char * path,char * p){
 	
 	if(*backit == '/') {
 		memcopy(p,path,backit - path+1);
+		p[backit - path +1] = '\0';
 		return p;
 	}
 	else return NULL;		
@@ -602,13 +654,21 @@ static bool fname_cmp(list_node * tag,uint_32 arg){
 	}
 }
 
-static dir_entry * find_in_dir(char * fname,dir * d,uint_32 * pos){
+static dir_entry * find_in_dir(char * fname,kdir* d,uint_32 * pos){
 	//name_or_ret在传入遍历函数作为fname传入
 	//但是同时也包含返回值，返回时包含两个32位变量
 	//第一个是目录项的指针，第二个是目录项在目录中偏移
 	uint_32 * name_or_ret = sys_malloc(GREATER(8,strlen(fname)));
 	memcopy(name_or_ret,fname,strlen(fname));
+	if(fname[strlen(fname) - 2] == '/') {
+		char * name = name_or_ret;
+		name[strlen(fname) - 2] = '\0';
+	}
 	void * n = lst_traverse(&d->iptr->buf_list,fname_cmp,name_or_ret);
+	if(fname[strlen(fname) - 2] == '\0') {
+		char * name = name_or_ret;
+		name[strlen(fname) - 2] = '/';
+	}
 	if(!n) return NULL;
 	else {
 		*pos = name_or_ret[1];
@@ -621,13 +681,15 @@ static dir_entry * find_in_dir(char * fname,dir * d,uint_32 * pos){
 //关闭目录需要注意关闭inode的内存
 //2.buf可被释放，里面的内容已被复制到dir的inode_ptr中
 //3.de是在父目录找到的本目录目录项
-static dir * load_dir(dir_entry *de,dir * d,char * buf){
+//4.由于兼容问题，本函数不会负责dir中path和father的初始化
+//在使用本函数时需注意
+static kdir* load_dir(dir_entry *de,kdir* d,char * buf){
 	//读入并初始化目录的inode
-	d->iptr = sys_malloc(sizeof(inode));
-	d->iptr->is_writing = true;
-	open_inode(d->iptr,de->inode_index);
+	d->iptr = open_inode(de->inode_index);
 	d->pos = 0;
 	init_list(&d->iptr->buf_list);
+	init_list(&d->sonlist);
+
 	//默认在入目录时全部读入内容
 	uint_32 bcnt = DIV_ROUND_UP(d->iptr->entry->fsize,BLOCK_SIZE);
 	fbuf * fbufs = sys_malloc(bcnt * sizeof(fbuf));
@@ -646,7 +708,7 @@ static dir * load_dir(dir_entry *de,dir * d,char * buf){
 }
 
 //注意和read_dir不同，这里没有再次申请inode和fbuf的空间
-static dir * reload_dir(dir_entry *de,dir * d,char *buf){
+static kdir* reload_dir(dir_entry *de,kdir* d,char *buf){
 	if(d->iptr->dirty){
 		printk("the file has already changed,are you sure to reload?\n \
 			(You will lost the change if you don't save it before reload)\n ");
@@ -709,10 +771,30 @@ static int file_depth(char * path){
 	return depth;
 }
 
+static dname_cmp(list_node * tag,char * path){
+	kdir* d = struct_get(kdir,tag,tag);
+	if(!strcmp(d->path,path))
+		return true;
+	else return false;
+}
+
+//返回离被查找目录最近的一级目录
+static kdir* search_in_buf(char * path){
+	char * curf = sys_malloc(MAX_DIR_SEARCH_LENGTH);
+	memset_8(curf,MAX_DIR_SEARCH_LENGTH,0);
+	kdir* d = &root_dir;
+	list_node * n;
+	while(true){
+		n = lst_find_elem(&d->sonlist,dname_cmp,path);
+		if(!n)	return d;
+		else d = struct_get(kdir,tag,n);
+	}	
+}
+
 //查找成功时，target就是返回值
 //否则返回的NULL，taregt参数指向查找失败的目录项
 #define ROOT_ENTRY 0xff501910
-dir_entry* search_file(char * path, search_log * s_log,dir_entry * target){
+dir_entry* search_file(char * path,kdir* parent,search_log * s_log,dir_entry * target){
 	s_log->depth = 1;
 	//根目录直接返回
 	if(!strcmp(path,"/") || !strcmp(path,"/.")
@@ -726,34 +808,58 @@ dir_entry* search_file(char * path, search_log * s_log,dir_entry * target){
 	ASSERT(path[0] == '/');
 #endif
 	memset_8(s_log->search_path,MAX_DIR_SEARCH_LENGTH,0);
-	dir * parent = &root_dir;
-	char * dir_buf = sys_malloc(sizeof(dir));
+	kdir * dir_buf = sys_malloc(sizeof(kdir));
 	dir_entry *de;
 	//sp指向search_path中最后一部分，即当前搜索项
 	char * sp = s_log->search_path;
 	char * buf = sys_malloc(2*SECTOR_SIZE);
+	//先在目录缓存中寻找该文件的父目录
+	char * ppbuf = sys_malloc(strlen(path));
+	char * pp = get_parent_path(path,pp);
+	//printk("path:%s\n",path);
+#ifdef __DBEUG__
+	ASSERT(pp);
+#endif 	
+	parent = search_in_buf(pp);
+	int pplen = strlen(parent->path);
+	memcopy(sp,parent->path,pplen);
+	sp += pplen;
+	--sp;
+	path += pplen;
+	--path;
 	while(true){
 		//printk("sp:%s\n",sp);
-		strcat(sp,sp,"/");
 		sp += strlen(sp);
 		--sp;
 		++s_log->depth;
 		
 		path = parse_path(path,sp);
-		printk("sp:%s,path:%s\n",sp,path);
+		//printk("sp:%s,path:%s\n",sp,path);
+		//printk("father path:%s\n",parent->path);
 		uint_32 pos;
 		de = find_in_dir(sp,parent,&pos);
 		//printk("fname : %s\n",sp);
 		if(!de){
-			printk("file not find in directory:%s\n",s_log->search_path);
+			printk("file %s not find in directory:%s\n",sp,s_log->search_path);
 			s_log->ft = FT_UNKNOW;
 			return NULL;
 		}
 		switch(de->ft){
 			case FT_DIRECTORY:{
 				s_log->ft = FT_DIRECTORY;
-				if(*path){
-					parent = load_dir(de,dir_buf,buf);
+				if(*path){	
+					load_dir(de,dir_buf,buf);
+#ifdef __DEBUG__
+					ASSERT(!lst_find_elem(&parent->sonlist,dname_cmp,dir_buf->path));
+#endif					
+					lst_push(&parent->sonlist,&dir_buf->tag);
+					dir_buf->father = parent;
+					dir_buf->path = sys_malloc(strlen(s_log->search_path));
+					memcopy(dir_buf->path,s_log->search_path,strlen(s_log->search_path));
+					//printk("%s\n",dir_buf->path);
+					s_log->parent = parent;
+					parent = dir_buf;
+					dir_buf = sys_malloc(sizeof(dir));
 					memcopy(target,de,sizeof(dir_entry));
 				}
 				else	goto end;
@@ -772,57 +878,84 @@ dir_entry* search_file(char * path, search_log * s_log,dir_entry * target){
 end:
 	memcopy(target,de,sizeof(dir_entry));
 	sys_free(buf);
-	sys_free(dir_buf);
+	sys_free(ppbuf);
 	return target;
 }
 
-bool open_dir(char* path,dir * d){
+bool open_dir(char* path,dir* d){
 	uint_32 pathlen = strlen(path);
 	if(path[pathlen-2] != '/'){
 		printk("%s is not a directory\n",path);
 		return false;
 	}	
 
+	proc * p = get_running()->proc;
+	d->path = sys_malloc(pathlen);
+	memcopy(d->path,path,pathlen);
+	d->pos = 0;
+	//如果在缓存中找到，直接返回
+	kdir * dp = search_in_buf(path);
+	if(!strcmp(dp->path,path)){
+		d->iptr = dp->iptr;
+		ipushp(d->iptr,p);
+		return true;
+	}
+	//d是用户进程的内存，kd是内核中的数据
+	kdir * kd = sys_malloc(sizeof(kdir));
 	search_log *s_log = sys_malloc(sizeof(search_log));
 	dir_entry * de = sys_malloc(sizeof(dir_entry));
-	dir_entry * target = search_file(path,s_log,de);
-	sys_free(s_log);
+	dir_entry * target = search_file(path,dp,s_log,de);
 	if(target == ROOT_ENTRY){
-		*d = root_dir;
-		d->path = sys_malloc(MAX_FNAME_LENGTH);
-		memcopy(d->path,path,strlen(path));
+		d->iptr = kd->iptr;
+		ipushp(d->iptr,p);
 		sys_free(de);
+		sys_free(s_log);
 		return true;
 	}
 	else if(!target){
+		sys_free(d->path);
 		sys_free(de);
+		sys_free(s_log);
 		return false;
 	}
 	else {
 #ifdef __DEBUG__
 		ASSERT(de == target);
 #endif
+		//载入内核目录
 		char * buf = sys_malloc(BLOCK_SIZE);
-		load_dir(de,d,buf);
-		d->path = sys_malloc(pathlen);
-		memcopy(d->path,path,pathlen);
+		load_dir(de,kd,buf);
+		kd->path = sys_malloc(pathlen);
+		memcopy(kd->path,path,pathlen);
+		kd->father = s_log->parent;
+		lst_push(&dp->sonlist,&kd->tag);
+		//复制到用户的目录
+		d->iptr = kd->iptr;
+
 		sys_free(buf);
 		sys_free(de);
+		sys_free(s_log);
 		return true;
 	}	
 }
 
-bool reopen_dir(char *path,dir * d){
+bool reopen_dir(char *path,dir* d){
+	kdir * kd = search_in_buf(path);
+	int pathlen = strlen(path);
+#ifdef __DEBUG__
+	ASSERT(!strcmp(path,kd->path));
+#endif
 	search_log * s_log = sys_malloc(sizeof(search_log));
 	dir_entry * de = sys_malloc(sizeof(dir_entry));
-	dir_entry * target = search_file(path,s_log,de);
-	sys_free(s_log);
+	dir_entry * target = search_file(path,&root_dir,s_log,de);
 	if(target == ROOT_ENTRY){
 		reload_root(cur_part);
+		sys_free(s_log);
 		sys_free(de);
 		return true;
 	}
 	else if(!target){
+		sys_free(s_log);
 		sys_free(de);
 		return false;
 	}
@@ -831,7 +964,13 @@ bool reopen_dir(char *path,dir * d){
 		ASSERT(de == target);
 #endif
 		char * buf = sys_malloc(BLOCK_SIZE);
-		reload_dir(de,d,buf);
+		reload_dir(de,kd,buf);
+		sys_free(d->path);		
+		d->path = sys_malloc(pathlen);
+		memcopy(d->path,path,pathlen);
+		d->iptr = kd->iptr;		
+
+		sys_free(s_log);
 		sys_free(buf);	
 		sys_free(de);
 		return true;
@@ -840,15 +979,33 @@ bool reopen_dir(char *path,dir * d){
 
 //目录和文件不同，没有使用回写，而是write through，
 //所以在关闭时很简单
-void close_dir(dir * d){
-	if(d = &root_dir) return;
-	lst_free_elem(&d->iptr->buf_list,fbuf_free);
+void close_dir(dir* d){
+	kdir * kd = search_in_buf(d->path);
+	proc * p = get_running()->proc;
+#ifdef __DEBUG__
+	ASSERT(!strcmp(d->path,kd->path));
+#endif
+	if(&root_dir == kd || kd->iptr->open_cnt > 1){
+		irmp(d->iptr,p);
+	}
+	else{
+#ifdef __DEBUG__
+		ASSERT(kd->iptr->open_cnt == 1)
+		ASSERT(lst_empty(&kd->sonlist));
+#endif
+		irmp(d->iptr,p);
+		lst_remove(&kd->father->sonlist,&kd->tag);
+		lst_free_elem(&kd->iptr->buf_list,fbuf_free);
+		close_inode(kd->iptr);
+		sys_free(kd->path);
+		sys_free(kd);	
+	}
 	sys_free(d->path);
 	sys_free(d);
-	return;		
+	return;
 }
 
-bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
+bool add_entry(kdir* parent,char * fname,uint_32 i_no,ftype ft){
 	uint_32 dir_size = parent->iptr->entry->fsize;
 	uint_32 sect_offset = dir_size / SECTOR_SIZE;
 	char * buf = sys_malloc(2*SECTOR_SIZE);
@@ -897,7 +1054,7 @@ bool add_entry(dir * parent,char * fname,uint_32 i_no,ftype ft){
 	
 }
 
-bool delete_entry(dir * parent,char * fname){
+bool delete_entry(kdir* parent,char * fname){
 	uint_32 pos;
 	uint_32 dir_size = parent->iptr->entry->fsize;
 	dir_entry * de = find_in_dir(fname,parent,&pos);
@@ -950,7 +1107,7 @@ bool delete_dir(char * path,dir_rmarg rmarg){
 	}
 	
 	char * pp = sys_malloc(strlen(path));
-	dir * p = sys_malloc(sizeof(dir));
+	kdir* p = sys_malloc(sizeof(dir));
 	if(!open_dir(pp,p)){
 		printk("Open directory failed:%s\n",pp);
 		return false;
@@ -964,7 +1121,7 @@ bool delete_dir(char * path,dir_rmarg rmarg){
 	
 	dir_entry * de = sys_malloc(sizeof(dir_entry));
 	search_log * slog = sys_malloc(sizeof(search_log));
-	dir_entry * target = search_file(path,slog,de);
+	dir_entry * target = search_file(path,&root_dir,slog,de);
 	if(!target){
 		printk("%s doesn't exsit\n",path);
 		return false;
@@ -1029,7 +1186,7 @@ void finish_reading(inode * in){
 	unlock(in->read_lock);
 }
 
-void print_dir(dir *d){
+void print_dir(dir*d){
 	actomic_action(read_set,d->iptr);
 	lst_traverse(&d->iptr->buf_list,fbuf_print_de,NULL);
 	finish_reading(d->iptr);
@@ -1037,7 +1194,7 @@ void print_dir(dir *d){
 
 /*********************文件操作*************************/
 
-bool create_file(dir * p,char * fname,ftype ft,uint_32 fsize){
+bool create_file(dir* p,char * fname,ftype ft,uint_32 fsize){
 	int failed_flag = 0;
 	if(strlen(fname) > MAX_FNAME_LENGTH){
 		printk("file name is longer than limit : %d characters\n",MAX_FNAME_LENGTH);
@@ -1123,7 +1280,7 @@ rollback:
 	return false;
 }	
 
-bool delete_file(dir * p,char * fname){
+bool delete_file(dir* p,char * fname){
 	uint_32 pos;
 	dir_entry * de = find_in_dir(fname,p,&pos);
 	if(!de){
@@ -1167,14 +1324,7 @@ static inode* load_file(dir_entry * de,open_flag of){
 		printk("the number of file be opened has reach the limit\n");
 		return -1;
 	}
-	inode * in = sys_malloc(sizeof(inode));
-	in->is_writing = true;
-	open_inode(in,de->inode_index);
-	init_list(&in->buf_list);
-	lock(&flloc_lock);
-	inode_cnt++;
-	unlock(&flloc_lock);
-	in->is_writing = false;
+	inode * in = open_inode(de->inode_index);
 	return in;
 }
 
@@ -1226,7 +1376,7 @@ int open_file(char * path,open_flag of){
 	}
 	search_log * slog = sys_malloc(sizeof(search_log));
 	dir_entry * de = sys_malloc(sizeof(dir_entry));
-	dir_entry * target = search_file(path,slog,de);
+	dir_entry * target = search_file(path,&root_dir,slog,de);
 	int depth = file_depth(path);
 	if(!target){
 #ifdef __DEBUG__
@@ -1241,7 +1391,7 @@ int open_file(char * path,open_flag of){
 		while(*it != '/') --it;
 		char * name = it+1;
 		create_file(de,name,FT_REGULAR,DEFAULT_FILE_SIZE);
-		target = search_file(path,slog,de);
+		target = search_file(path,&root_dir,slog,de);
 		//剩下的操作和按写文件打开相同	
 #ifdef __DEBUG__
 		ASSERT(target);
@@ -1257,14 +1407,11 @@ int open_file(char * path,open_flag of){
 		case FT_REGULAR:{
 			in = find_in_itable(target->inode_index);	
 			if(in){
-				++in->open_cnt;
+				ipushp(in,p);
 			}
 			else in = load_file(target,of);
-
 			if(!in) return fd;
 			else{
-				++in->open_cnt;
-				//在inode链表中加入proc的工作在打开inode时进行
 #ifdef	__DEBUG__
 				ASSERT(in->open_cnt == 1);
 #endif
@@ -1336,16 +1483,16 @@ bool close_file(int fd){
 		lst_free_elem(&f->iptr->buf_list,fbuf_free);
 		unlock(in->write_lock);
 	}
-	lst_remove(&in->proc_list,&p->general_tag);
+	irmp(in,p);
 	uninstall_file(p,fd);
 	if(lst_empty(&in->proc_list)){
+#ifdef __DEBUG__
+		ASSERT(in->open_cnt == 0);
+#endif
 		close_inode(in);
 	}
 }
 
-int sys_open(char * path,open_flag of){
-	return open_file(path,of);
-}
 
 //把指定位置的块读入并返回该位置的指针
 //end返回了fblock中数据的结束位置	
@@ -1483,16 +1630,32 @@ void set_fpos(int fd,size_t pos){
 	f->fpos = pos;
 }
 
+/*********************系统调用接口**************************/
+bool sys_seek(int fd,size_t pos){
+	char * res;
+	uint_32 end;
+	set_fpos(fd,pos);
+	res = seek(fd,&end,pos);
+	if(!res)
+		return false;
+	else return true;
+}
 
+void sys_fresh(int fd){
+	
+}
 
-
-
-
-
-
-
-
-
+dir* sys_cd(char * path){
+	dir * d = sys_malloc(sizeof(dir));
+	d->path = sys_malloc(strlen(path));
+	memcopy(d->path,path,strlen(path)); 
+	if(!open_dir(path,d)){
+		printk("Open directory %s filed\n",path);
+		return NULL;
+	}	
+	set_workdir(get_running()->proc,d);
+	return d;
+}
 
 
 

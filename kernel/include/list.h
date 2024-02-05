@@ -16,9 +16,17 @@ struct list_node{
 	struct list_node * pre;
 };
 
+//list_node的子类
+typedef struct list_with_member{
+	struct list_node * next;
+	struct list_node * pre;
+	void * member;
+}list_with_member;
+
 typedef struct list_node list_node;
 typedef bool cmp_fun_type (list_node * tag,uint_32 arg);
 typedef void free_fun (list_node * tag);
+typedef list_with_member lwm;
 
 struct list_head * init_list(struct list_head * queue);
 void lst_push(struct list_head *,struct list_node *);
@@ -37,5 +45,13 @@ list_node * lst_find_elem(list * l,cmp_fun_type compareor,uint_32 arg);
 list_node * lst_insert_elem(list * l,list_node * tag,cmp_fun_type compareor,uint_32 arg);
 //移除第一个满足比较器的节点，如果没有满足元素的节点则返回false
 bool lst_remove_elem(list * l,cmp_fun_type compareor,uint_32 arg);
+
+lwm* lwm_find(list * l,void *member);
+void lwm_push(list * l,void * member);
+void lwm_remove(list * l,void * member);
+void* lwm_pop(list * l);
+void lwm_head_insert(list * l,void * member);
+void lwm_free(list * l);
+#define lwm_empty(l)	(lst_empty(l))
 
 #endif

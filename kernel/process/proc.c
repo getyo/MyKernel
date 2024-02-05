@@ -207,3 +207,7 @@ void uninstall_file(proc * p,int fd){
 	sys_free(f->path);
 	sys_free(f);
 }
+
+void set_workdir(proc * p,void * d){
+	p->workdir = d;
+}

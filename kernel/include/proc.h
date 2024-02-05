@@ -61,4 +61,5 @@ void exchange_esp0 (thread * t);
 int install_file(proc *p,void * in,char * fname,char * path,uint_32 fpos,uint_8 of);
 void uninstall_file(proc * p,int fd);  
 int has_file(proc *  p,char * path);
+void set_workdir(proc * p,void * d);
 #endif

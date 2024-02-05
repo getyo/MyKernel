@@ -166,4 +166,67 @@ void lst_free_elem(list * l,free_fun f){
 	}	
 }
 
+static bool lwm_memcmp(lwm * n,void * member){
+	return n->member == member ? true: false;
+}
+
+lwm * lwm_find(list * l,void * member){
+	return lst_find_elem(l,lwm_memcmp,member);
+}
+
+void lwm_push(list * l,void * member){
+	lwm * n = sys_malloc(sizeof(lwm));
+	n->member = member;
+	lst_push(l,n);
+}
+
+void* lwm_pop(list * l){
+	lwm * n = lst_pop(l);
+	void * ret = n->member;
+	sys_free(n);
+	return ret;
+}
+
+void lwm_head_insert(list * l,void * m){
+	lwm * n = sys_malloc(sizeof(lwm));
+	n->member = m;
+	lst_head_insert(l,n);
+}
+
+void lwm_remove(list * l,void * m){
+	lwm * n = lst_find_elem(l,lwm_memcmp,m);
+#ifdef __DEBUG__
+	ASSERT(n != NULL);
+#endif
+	lst_remove(l,n);
+	sys_free(n);
+}
+
+static bool lwm_freefun(lwm * n,uint_32 arg){
+	sys_free(n);	
+	return false;
+}
+
+void lwm_free(list * l){
+	lst_free_elem(l,lwm_freefun);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

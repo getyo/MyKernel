@@ -59,15 +59,25 @@ typedef struct dir_entry{
 	ftype ft; 
 }dir_entry;
 
-//目录内存映像
-typedef struct dir{ 
+//目录用户内容印象
+typedef struct dir{
 	char * path;
-	inode * iptr;
-	uint_32 pos;	//目录游标
+	inode * iptr;	
+	uint_32 pos;
 }dir;
 
+//目录内核内存映像
+typedef struct kdir{ 
+	char * path;
+	inode * iptr;
+	uint_32 pos;
+	struct kdir * father;
+	list_node tag;
+	list sonlist;
+}kdir;
+
 //记录当前根目录
-dir root_dir;
+kdir root_dir;
 //记录当前分区
 partition * cur_part;
 //文件系统挂载以及初始化相关
@@ -129,7 +139,7 @@ void bitmap_sycn(uint_32 bit_index,bitmap_type bmt);
 //读取inode,缓存区由主调函数提供，至少两个扇区大小，返回值指向要读取的inode_entry
 inode_entry * read_inode(uint_32 index,char * buf);
 inode_entry * write_inode(uint_32 i_no,inode_entry *ie,char *buf);
-void open_inode(inode *in,uint_32 index);
+inode * open_inode(uint_32 index);
 void init_inode(inode *i,uint_32 open_cnt,inode_entry *entry);
 void close_inode(inode * in);
 void reload_inode(inode *in,uint_32 index);
@@ -145,12 +155,13 @@ typedef struct search_log{
 	char search_path[MAX_DIR_SEARCH_LENGTH];
 	int depth;
 	ftype ft;
+	kdir * parent;
 }search_log;
 
 /******************目录相关操作********************/
 //查找成功时，target就是返回值
 //否则返回的NULL，taregt参数指向查找失败的目录项
-dir_entry * search_file(char *path,search_log * s_log,dir_entry * target);
+dir_entry * search_file(char *path,kdir * p,search_log * s_log,dir_entry * target);
 bool open_dir(char * path,dir * d);
 void close_dir(dir * d);
 bool reopen_dir(char * path,dir *d);
@@ -176,4 +187,20 @@ bool read_file(int fd,char * dst,size_t size);
 bool write_file(int fd,char * src,size_t size);
 bool close_file(int fd);
 void set_fpos(int fd,size_t pos);
+
+/******************系统调用接口****************/
+#define sys_open(path,of) open_file(path,of)
+#define sys_close(fd) close_file(fd)
+#define sys_readf(fd,buf,size) read_file(fd,buf,size)
+#define sys_writef(fd,buf,size) write_file(fd,buf,size)
+bool sys_seek(int fd,size_t pos);
+void sys_fresh(int fd);
+dir * sys_cd(char * path);
+
+
+
+
+
+
+
 #endif

@@ -105,6 +105,7 @@ struct thread{
 	
 	list_node general_tag;
 	void* file_lock;
+	void* workdir;
 };
 typedef struct thread thread;
 typedef struct thread proc;
